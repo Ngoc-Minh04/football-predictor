@@ -104,8 +104,18 @@ export async function analyzeMatch(context) {
  */
 function getFallbackAnalysis(context) {
   const pred = context.prediction;
-  const homeWinProb = pred?.result?.home || 0.4;
+  const homeWinProb = pred?.result?.home || 0.33;
+  const drawProb = pred?.result?.draw || 0.33;
+  const awayWinProb = pred?.result?.away || 0.33;
+
   const riskLevel = homeWinProb > 0.6 ? 'low' : homeWinProb > 0.45 ? 'medium' : 'high';
+
+  let favoredResult = 'a draw';
+  if (homeWinProb > drawProb && homeWinProb > awayWinProb) {
+    favoredResult = context.homeTeam;
+  } else if (awayWinProb > homeWinProb && awayWinProb > drawProb) {
+    favoredResult = context.awayTeam;
+  }
 
   return {
     keyFactors: [
@@ -113,7 +123,7 @@ function getFallbackAnalysis(context) {
       { factor: 'Statistical form analysis', impact: 'neutral', weight: 0.5 },
     ],
     riskLevel,
-    recommendation: `Based on statistical models, the prediction favors ${homeWinProb > 0.5 ? context.homeTeam : (pred?.result?.draw > pred?.result?.away ? 'a draw' : context.awayTeam)}.`,
+    recommendation: `Based on statistical models, the prediction favors ${favoredResult}.`,
     summary: `This analysis is generated from statistical models only. Enable Claude API for deeper contextual analysis including injury impact, tactical matchups, and recent form trends.`,
   };
 }

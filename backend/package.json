@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "seed": "node scrapers/seedHistorical.js",
+    "seed": "node scrapers/seedHistorical.js PL",
+    "seed-wc": "node scrapers/seedHistorical.js WC",
+    "seed-ec": "node scrapers/seedHistorical.js EC",
+    "seed-cl": "node scrapers/seedHistorical.js CL",
     "seed-xg": "node scrapers/understat.js",
     "fetch-odds": "node scrapers/oddsApi.js",
     "backtest": "node utils/backtest.js"

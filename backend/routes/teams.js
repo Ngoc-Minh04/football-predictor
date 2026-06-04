@@ -14,7 +14,10 @@ router.get('/', async (req, res) => {
 
     let sql = 'SELECT * FROM teams';
     const params = [];
-    if (league) { sql += ' WHERE league = ?'; params.push(league); }
+    if (league) {
+      sql += ' WHERE \',\' || league || \',\' LIKE ?';
+      params.push(`%,${league},%`);
+    }
     sql += ' ORDER BY name ASC';
 
     const teams = await queryAll(db, sql, params);

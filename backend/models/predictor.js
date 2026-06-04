@@ -1,16 +1,19 @@
 /**
  * Main Predictor — combines Poisson, Dixon-Coles, ELO and situational factors
+ *
+ * Upgrade 1: Venue-specific rolling stats (home team uses home-only matches, away uses away-only)
+ * Upgrade 2: Dynamic home advantage (calculated from DB data, not hardcoded 1.25)
+ *            + isNeutral flag for World Cup / neutral venue matches
  */
 
-import { calcLambda, buildScoreMatrix, calcResultProbs, calcOverUnder, getMostLikelyScore, getXGStats } from './poisson.js';
+import { calcLambda, buildBivariateScoreMatrix, calcResultProbs, calcOverUnder, getMostLikelyScoreConsistent, getXGStats } from './poisson.js';
 import { applyDixonColes } from './dixonColes.js';
 import { eloToProbabilityAdjustment } from './elo.js';
 
-const HOME_ADVANTAGE = 1.25;
 const LEAGUE_AVG_GOALS = 1.5; // fallback when no real data
 
 /**
- * Calculate weighted attack & defence stats based on 8 recent matches
+ * Calculate weighted rolling stats (all recent matches, mixed home+away)
  * Uses exponential time-decay: w_i = e^(-0.0065 * days_since_match)
  */
 function calcWeightedRollingStats(matches, teamId, targetDateStr = null) {
@@ -21,19 +24,17 @@ function calcWeightedRollingStats(matches, teamId, targetDateStr = null) {
 
   matches.forEach((m, idx) => {
     if (idx >= 8) return;
-    
-    // Tính số ngày t_i
-    let diffDays = 4; // mặc định
+
+    let diffDays = 4;
     if (m.date) {
       const matchDate = new Date(m.date);
       const diffMs = targetDate - matchDate;
       const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
       diffDays = days >= 0 ? days : 4;
     }
-    
-    // w_i = e^(-0.0065 * t_i)
+
     const w = Math.exp(-0.0065 * diffDays);
-    
+
     const isHome = Number(m.home_team_id) === Number(teamId);
     const gs = isHome ? m.score_home : m.score_away;
     const ga = isHome ? m.score_away : m.score_home;
@@ -49,14 +50,48 @@ function calcWeightedRollingStats(matches, teamId, targetDateStr = null) {
   return { avgScored, avgConceded };
 }
 
+/**
+ * Calculate weighted venue-specific rolling stats
+ * homeVenueMatches: only matches where team played at HOME (as home_team_id)
+ * awayVenueMatches: only matches where team played AWAY (as away_team_id)
+ * These are pre-filtered in the route/backtest before calling predict()
+ */
+function calcVenueSpecificStats(venueMatches, teamId, isHomeRole, targetDateStr = null) {
+  const targetDate = targetDateStr ? new Date(targetDateStr) : new Date();
+  let totalWeight = 0;
+  let weightedGoalsScored = 0;
+  let weightedGoalsConceded = 0;
+
+  venueMatches.forEach((m, idx) => {
+    if (idx >= 6) return;
+
+    let diffDays = 4;
+    if (m.date) {
+      const diffMs = targetDate - new Date(m.date);
+      const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+      diffDays = days >= 0 ? days : 4;
+    }
+
+    const w = Math.exp(-0.0065 * diffDays);
+
+    // In venue-specific matches, isHomeRole tells us the perspective
+    const gs = isHomeRole ? m.score_home : m.score_away;
+    const ga = isHomeRole ? m.score_away : m.score_home;
+
+    weightedGoalsScored += gs * w;
+    weightedGoalsConceded += ga * w;
+    totalWeight += w;
+  });
+
+  if (totalWeight === 0) return null; // not enough data
+  return {
+    avgScored: weightedGoalsScored / totalWeight,
+    avgConceded: weightedGoalsConceded / totalWeight,
+  };
+}
 
 /**
  * Compute attack/defence strengths from average goals
- * @param {number} homeAvgScored
- * @param {number} homeAvgConceded
- * @param {number} awayAvgScored
- * @param {number} awayAvgConceded
- * @param {number} leagueAvg - league average goals per team per match
  */
 function calcStrengths(homeAvgScored, homeAvgConceded, awayAvgScored, awayAvgConceded, leagueAvgHome, leagueAvgAway) {
   const homeAttack = homeAvgScored / leagueAvgHome;
@@ -68,8 +103,6 @@ function calcStrengths(homeAvgScored, homeAvgConceded, awayAvgScored, awayAvgCon
 
 /**
  * Apply situational multipliers to lambdas
- * @param {object} lambdas - { homeLambda, awayLambda }
- * @param {object} situationalFactors
  */
 function applySituationalFactors(lambdas, situationalFactors = {}) {
   let { homeLambda, awayLambda } = lambdas;
@@ -98,14 +131,11 @@ function applySituationalFactors(lambdas, situationalFactors = {}) {
 
 /**
  * Blend ELO adjustment into result probabilities (30% weight)
- * @param {object} probs - { home, draw, away } from Poisson
- * @param {number} eloHomeWinProb - win probability from ELO (0–1)
  */
 function blendEloAdjustment(probs, eloHomeWinProb) {
   const POISSON_WEIGHT = 0.70;
   const ELO_WEIGHT = 0.30;
 
-  // Distribute ELO into home/away, keep draw ratio stable
   const eloHome = eloHomeWinProb;
   const eloAway = 1 - eloHomeWinProb;
   const rawDraw = probs.draw;
@@ -123,7 +153,6 @@ function blendEloAdjustment(probs, eloHomeWinProb) {
 
 /**
  * Calculate overall confidence score (0–1)
- * Based on how dominant the most likely outcome is
  */
 function calcConfidence(probs, homeStats, awayStats) {
   const maxProb = Math.max(probs.home, probs.draw, probs.away);
@@ -137,12 +166,26 @@ function calcConfidence(probs, homeStats, awayStats) {
 /**
  * Main prediction function
  * @param {object} params
- * @param {object} params.homeStats - { goals_scored, goals_conceded, matches_played, xG, xGA }
+ * @param {object} params.homeStats
  * @param {object} params.awayStats
+ * @param {Array}  params.homeRecentMatches      - 8 mixed recent matches (home+away) for home team
+ * @param {Array}  params.awayRecentMatches      - 8 mixed recent matches for away team
+ * @param {Array}  params.homeHomeRecentMatches  - 6 home-venue-only matches for home team [UPGRADE 1]
+ * @param {Array}  params.awayAwayRecentMatches  - 6 away-venue-only matches for away team [UPGRADE 1]
+ * @param {number} params.homeTeamId
+ * @param {number} params.awayTeamId
  * @param {number} params.homeElo
  * @param {number} params.awayElo
- * @param {number} params.leagueAvgGoals
- * @param {object} params.situationalFactors - { homeFatigue, awayFatigue, isDerby, isImportantMatch }
+ * @param {number} params.leagueAvgHome
+ * @param {number} params.leagueAvgAway
+ * @param {object} params.situationalFactors
+ * @param {number} params.h2hAvgGoals
+ * @param {Array}  params.h2hRecentResults       - last 5 h2h match results for probability adjustment [UPGRADE 3]
+ * @param {number} params.homeRestDays
+ * @param {number} params.awayRestDays
+ * @param {number} params.homeWinRate
+ * @param {string} params.matchDate
+ * @param {boolean} params.isNeutral             - true for World Cup / neutral venue [UPGRADE 2]
  */
 export function predict(params) {
   const {
@@ -150,6 +193,8 @@ export function predict(params) {
     awayStats = { goals_scored: 15, goals_conceded: 20, matches_played: 14, xG: 16, xGA: 21 },
     homeRecentMatches = [],
     awayRecentMatches = [],
+    homeHomeRecentMatches = [],  // Upgrade 1
+    awayAwayRecentMatches = [],  // Upgrade 1
     homeTeamId,
     awayTeamId,
     homeElo = 1500,
@@ -158,102 +203,129 @@ export function predict(params) {
     leagueAvgAway = 1.2,
     situationalFactors = {},
     h2hAvgGoals = 0,
+    h2hRecentResults = [],       // Upgrade 3: [{homeGoals, awayGoals}]
     homeRestDays = 4,
     awayRestDays = 4,
     homeWinRate = 0.5,
     matchDate = null,
+    isNeutral = false,           // Upgrade 2: World Cup neutral venue
   } = params;
 
   const homeIdNum = homeTeamId !== undefined && homeTeamId !== null ? Number(homeTeamId) : null;
   const awayIdNum = awayTeamId !== undefined && awayTeamId !== null ? Number(awayTeamId) : null;
 
-  // Calculate weighted rolling averages of goals scored/conceded
-  let homeAvgScored = 1.2;
-  let homeAvgConceded = 1.2;
-  let awayAvgScored = 1.2;
-  let awayAvgConceded = 1.2;
-
   const targetDateStr = matchDate || (homeRecentMatches[0]?.date ? homeRecentMatches[0].date : null);
 
+  // ─── Step 1: Calculate rolling stats (general — all recent matches) ────────
+  let homeRollingAll = { avgScored: 1.2, avgConceded: 1.2 };
+  let awayRollingAll = { avgScored: 1.2, avgConceded: 1.2 };
+
   if (homeRecentMatches && homeRecentMatches.length > 0 && homeIdNum !== null) {
-    console.log(`\n=== DEBUG LOGGING: ĐỘI NHÀ (ID: ${homeIdNum}) ===`);
-    homeRecentMatches.forEach((m, idx) => {
-      if (idx >= 8) return;
-      const isHome = Number(m.home_team_id) === homeIdNum;
-      const gs = isHome ? m.score_home : m.score_away;
-      const ga = isHome ? m.score_away : m.score_home;
-      
-      let diffDays = 4;
-      if (m.date && targetDateStr) {
-        diffDays = Math.round((new Date(targetDateStr) - new Date(m.date)) / (1000 * 60 * 60 * 24));
-        if (diffDays < 0) diffDays = 4;
-      }
-      const w = Math.exp(-0.0065 * diffDays);
-      console.log(` Trận ${idx+1}: Ngày ${m.date} | ${m.score_home}-${m.score_away} | Vai trò: ${isHome ? 'HOME' : 'AWAY'} | goals_scored thực tế: ${gs} | goals_conceded thực tế: ${ga} | Trọng số Decay: ${w.toFixed(4)} (cách ${diffDays} ngày)`);
-    });
-    const rolling = calcWeightedRollingStats(homeRecentMatches, homeIdNum, targetDateStr);
-    homeAvgScored = rolling.avgScored;
-    homeAvgConceded = rolling.avgConceded;
-    console.log(` Kết quả tính: avgScored=${homeAvgScored.toFixed(4)}, avgConceded=${homeAvgConceded.toFixed(4)}`);
+    homeRollingAll = calcWeightedRollingStats(homeRecentMatches, homeIdNum, targetDateStr);
   } else if (homeStats) {
     const stats = getXGStats(homeStats);
-    homeAvgScored = stats.avgScored;
-    homeAvgConceded = stats.avgConceded;
+    homeRollingAll = { avgScored: stats.avgScored, avgConceded: stats.avgConceded };
   }
 
   if (awayRecentMatches && awayRecentMatches.length > 0 && awayIdNum !== null) {
-    console.log(`=== DEBUG LOGGING: ĐỘI KHÁCH (ID: ${awayIdNum}) ===`);
-    awayRecentMatches.forEach((m, idx) => {
-      if (idx >= 8) return;
-      const isHome = Number(m.home_team_id) === awayIdNum;
-      const gs = isHome ? m.score_home : m.score_away;
-      const ga = isHome ? m.score_away : m.score_home;
-      
-      let diffDays = 4;
-      if (m.date && targetDateStr) {
-        diffDays = Math.round((new Date(targetDateStr) - new Date(m.date)) / (1000 * 60 * 60 * 24));
-        if (diffDays < 0) diffDays = 4;
-      }
-      const w = Math.exp(-0.0065 * diffDays);
-      console.log(` Trận ${idx+1}: Ngày ${m.date} | ${m.score_home}-${m.score_away} | Vai trò: ${isHome ? 'HOME' : 'AWAY'} | goals_scored thực tế: ${gs} | goals_conceded thực tế: ${ga} | Trọng số Decay: ${w.toFixed(4)} (cách ${diffDays} ngày)`);
-    });
-    const rolling = calcWeightedRollingStats(awayRecentMatches, awayIdNum, targetDateStr);
-    awayAvgScored = rolling.avgScored;
-    awayAvgConceded = rolling.avgConceded;
-    console.log(` Kết quả tính: avgScored=${awayAvgScored.toFixed(4)}, avgConceded=${awayAvgConceded.toFixed(4)}`);
+    awayRollingAll = calcWeightedRollingStats(awayRecentMatches, awayIdNum, targetDateStr);
   } else if (awayStats) {
     const stats = getXGStats(awayStats);
-    awayAvgScored = stats.avgScored;
-    awayAvgConceded = stats.avgConceded;
+    awayRollingAll = { avgScored: stats.avgScored, avgConceded: stats.avgConceded };
   }
 
-  // Bayesian shrinkage: blend rolling stats (70%) with league mean (30%)
-  // Prevents extreme rolling values from producing unrealistic lambdas
+  // ─── Step 2: Venue-specific stats (Upgrade 1) ─────────────────────────────
+  // Only use venue-split if NOT a neutral venue match
+  let homeAvgScored, homeAvgConceded, awayAvgScored, awayAvgConceded;
+
+  if (!isNeutral && homeHomeRecentMatches && homeHomeRecentMatches.length >= 3) {
+    // Home team's performance specifically at home
+    const venueHome = calcVenueSpecificStats(homeHomeRecentMatches, homeIdNum, true, targetDateStr);
+    if (venueHome) {
+      // Blend: 50% venue-specific + 30% rolling-all + 20% league average
+      homeAvgScored   = 0.50 * venueHome.avgScored   + 0.30 * homeRollingAll.avgScored   + 0.20 * leagueAvgHome;
+      homeAvgConceded = 0.50 * venueHome.avgConceded + 0.30 * homeRollingAll.avgConceded + 0.20 * leagueAvgAway;
+      console.log(`[Predictor] HOME venue-specific: scored=${venueHome.avgScored.toFixed(3)}, conceded=${venueHome.avgConceded.toFixed(3)}`);
+    } else {
+      homeAvgScored   = homeRollingAll.avgScored;
+      homeAvgConceded = homeRollingAll.avgConceded;
+    }
+  } else {
+    // Neutral venue or insufficient venue data: use rolling-all
+    homeAvgScored   = homeRollingAll.avgScored;
+    homeAvgConceded = homeRollingAll.avgConceded;
+  }
+
+  if (!isNeutral && awayAwayRecentMatches && awayAwayRecentMatches.length >= 3) {
+    // Away team's performance specifically away from home
+    const venueAway = calcVenueSpecificStats(awayAwayRecentMatches, awayIdNum, false, targetDateStr);
+    if (venueAway) {
+      // Blend: 50% venue-specific + 30% rolling-all + 20% league average
+      awayAvgScored   = 0.50 * venueAway.avgScored   + 0.30 * awayRollingAll.avgScored   + 0.20 * leagueAvgAway;
+      awayAvgConceded = 0.50 * venueAway.avgConceded + 0.30 * awayRollingAll.avgConceded + 0.20 * leagueAvgHome;
+      console.log(`[Predictor] AWAY venue-specific: scored=${venueAway.avgScored.toFixed(3)}, conceded=${venueAway.avgConceded.toFixed(3)}`);
+    } else {
+      awayAvgScored   = awayRollingAll.avgScored;
+      awayAvgConceded = awayRollingAll.avgConceded;
+    }
+  } else {
+    awayAvgScored   = awayRollingAll.avgScored;
+    awayAvgConceded = awayRollingAll.avgConceded;
+  }
+
+  // ─── Step 3: Bayesian Shrinkage (blend towards league mean) ───────────────
   const ROLLING_WEIGHT = 0.60;
   const MEAN_WEIGHT = 0.40;
-  homeAvgScored = homeAvgScored * ROLLING_WEIGHT + leagueAvgHome * MEAN_WEIGHT;
+  homeAvgScored   = homeAvgScored   * ROLLING_WEIGHT + leagueAvgHome * MEAN_WEIGHT;
   homeAvgConceded = homeAvgConceded * ROLLING_WEIGHT + leagueAvgAway * MEAN_WEIGHT;
-  awayAvgScored = awayAvgScored * ROLLING_WEIGHT + leagueAvgAway * MEAN_WEIGHT;
+  awayAvgScored   = awayAvgScored   * ROLLING_WEIGHT + leagueAvgAway * MEAN_WEIGHT;
   awayAvgConceded = awayAvgConceded * ROLLING_WEIGHT + leagueAvgHome * MEAN_WEIGHT;
 
-  // Step 1: Calculate attack/defence strengths
+  // ─── Step 4: Dynamic Home Advantage (Upgrade 2) ───────────────────────────
+  // Neutral venue (World Cup): homeAdvantage = 1.0 (unless explicitly overridden by host/home advantage)
+  // Regular match: homeAdvantage = leagueAvgHome / leagueAvgAway (from real data)
+  let homeAdvantage;
+  if (situationalFactors.isHomeAdvantage) {
+    homeAdvantage = leagueAvgAway > 0 ? (leagueAvgHome / leagueAvgAway) : 1.25;
+    homeAdvantage = Math.max(0.9, Math.min(1.5, homeAdvantage));
+    console.log(`[Predictor] Home advantage override enabled — homeAdvantage = ${homeAdvantage.toFixed(4)}`);
+  } else if (isNeutral) {
+    homeAdvantage = 1.0;
+    console.log(`[Predictor] Neutral venue — homeAdvantage = 1.0 (World Cup / sân trung lập)`);
+  } else {
+    homeAdvantage = leagueAvgAway > 0 ? (leagueAvgHome / leagueAvgAway) : 1.25;
+    // Clamp to reasonable range [0.9, 1.5]
+    homeAdvantage = Math.max(0.9, Math.min(1.5, homeAdvantage));
+    console.log(`[Predictor] Dynamic homeAdvantage = ${homeAdvantage.toFixed(4)} (leagueAvgHome=${leagueAvgHome.toFixed(3)}, leagueAvgAway=${leagueAvgAway.toFixed(3)})`);
+  }
+
+  // Apply home advantage to home team's attack and away team's defence perspective
+  const homeAvgScoredAdj   = homeAvgScored   * homeAdvantage;
+  const homeAvgConcededAdj = homeAvgConceded / homeAdvantage;
+
+  // ─── Step 5: Compute attack/defence strengths ─────────────────────────────
+  // Use a single leagueAvg reference (average of home+away) for neutral,
+  // or separate home/away averages for regular matches
+  const refLeagueAvg = isNeutral ? ((leagueAvgHome + leagueAvgAway) / 2) : null;
+  const effectiveLeagueHome = isNeutral ? refLeagueAvg : leagueAvgHome;
+  const effectiveLeagueAway = isNeutral ? refLeagueAvg : leagueAvgAway;
+
   const { homeAttack, homeDefence, awayAttack, awayDefence } = calcStrengths(
-    homeAvgScored, homeAvgConceded, awayAvgScored, awayAvgConceded, leagueAvgHome, leagueAvgAway
+    homeAvgScoredAdj, homeAvgConcededAdj,
+    awayAvgScored, awayAvgConceded,
+    effectiveLeagueHome, effectiveLeagueAway
   );
 
+  // ─── Step 6: Compute base lambdas ─────────────────────────────────────────
+  let homeLambda = calcLambda(homeAttack, awayDefence, effectiveLeagueHome);
+  let awayLambda = calcLambda(awayAttack, homeDefence, effectiveLeagueAway);
 
-  // Step 2: Compute base lambdas
-  let homeLambda = calcLambda(homeAttack, awayDefence, leagueAvgHome);
-  let awayLambda = calcLambda(awayAttack, homeDefence, leagueAvgAway);
-
-  // Step 3: Apply situational multipliers to lambdas
+  // ─── Step 7: Apply situational multipliers ────────────────────────────────
   let { homeLambda: adjHomeLambda, awayLambda: adjAwayLambda, factors } =
     applySituationalFactors({ homeLambda, awayLambda }, situationalFactors);
 
-  console.log(`\n[Predictor] leagueAvgHome = ${leagueAvgHome.toFixed(4)}, leagueAvgAway = ${leagueAvgAway.toFixed(4)}`);
-  console.log(`=== DEBUG LOGGING: WEIGHTED LAMBDAS ===`);
-  console.log(` Đội nhà Lambda: ${adjHomeLambda.toFixed(4)}`);
-  console.log(` Đội khách Lambda: ${adjAwayLambda.toFixed(4)}\n`);
+  console.log(`\n[Predictor] leagueAvgHome = ${leagueAvgHome.toFixed(4)}, leagueAvgAway = ${leagueAvgAway.toFixed(4)}, isNeutral = ${isNeutral}`);
+  console.log(`[Predictor] Lambda HOME: ${adjHomeLambda.toFixed(4)}, Lambda AWAY: ${adjAwayLambda.toFixed(4)}`);
 
   if (h2hAvgGoals > 2.5) {
     adjHomeLambda *= 1.15;
@@ -261,7 +333,6 @@ export function predict(params) {
     factors.push({ factor: 'Big Match Factor (H2H bàn thắng TB > 2.5)', impact: 0.15, icon: '⚽' });
   }
 
-  // rest_days factor (if > 5 days, multiply lambda * 1.05)
   if (homeRestDays > 5) {
     adjHomeLambda *= 1.05;
     factors.push({ factor: `Đội nhà nghỉ ngơi tốt (${homeRestDays} ngày)`, impact: 0.05, icon: '🔋' });
@@ -270,18 +341,17 @@ export function predict(params) {
     adjAwayLambda *= 1.05;
     factors.push({ factor: `Đội khách nghỉ ngơi tốt (${awayRestDays} ngày)`, impact: 0.05, icon: '🔋' });
   }
-  // Lambda ceiling: cap at 3.0 goals — extreme values distort score matrix
+
+  // Lambda ceiling: cap at 3.0 goals
   adjHomeLambda = Math.min(adjHomeLambda, 3.0);
   adjAwayLambda = Math.min(adjAwayLambda, 3.0);
 
-  // Step 4: Build Poisson matrix
-  let scoreMatrix = buildScoreMatrix(adjHomeLambda, adjAwayLambda);
+  // ─── Step 8: Build Bivariate Poisson score matrix ─────────────────────────
+  // λ3 = 0.10: shared covariance — captures negative correlation
+  // (when one team dominates, opponent defends tighter → fewer goals for both)
+  let scoreMatrix = buildBivariateScoreMatrix(adjHomeLambda, adjAwayLambda, 0.10);
 
-  // Step 5: Apply Dixon-Coles correction with dynamic rho
-  // rho calibrated so totalLambda=2.5 → rho=-0.13 (standard EPL value)
-  // Low-scoring (totalLambda < 2.0): rho=-0.18 (stronger low-score correction)
-  // High-scoring (totalLambda > 3.5): rho=-0.08 (weaker correction)
-  // Linear: rho = -0.255 + 0.05 * totalLambda, clamped to [-0.18, -0.08]
+  // ─── Step 9: Apply Dixon-Coles correction with dynamic rho ────────────────
   const totalLambda = adjHomeLambda + adjAwayLambda;
   const rho = Math.max(-0.18, Math.min(-0.08, -0.255 + 0.05 * totalLambda));
   console.log(`[Predictor] Dynamic ρ = ${rho.toFixed(4)} (totalLambda = ${totalLambda.toFixed(4)})`);
@@ -290,55 +360,95 @@ export function predict(params) {
   // Normalize matrix after Dixon-Coles
   let matrixSum = 0;
   for (let i = 0; i < scoreMatrix.length; i++) {
-    for (let j = 0; j < scoreMatrix[i].length; j++) {
-      matrixSum += scoreMatrix[i][j];
-    }
+    for (let j = 0; j < scoreMatrix[i].length; j++) matrixSum += scoreMatrix[i][j];
   }
   if (matrixSum > 0) {
     for (let i = 0; i < scoreMatrix.length; i++) {
-      for (let j = 0; j < scoreMatrix[i].length; j++) {
-        scoreMatrix[i][j] /= matrixSum;
-      }
+      for (let j = 0; j < scoreMatrix[i].length; j++) scoreMatrix[i][j] /= matrixSum;
     }
   }
 
-  // Mild draw boost: max +12% for very even matches, scaled by lambda diff
-  // Rationale: Poisson slightly underestimates draws in EPL (~26% actual vs ~23% predicted)
+  // Mild draw boost: max +18% for very even matches
   const diffLambda = Math.abs(adjHomeLambda - adjAwayLambda);
   const maxLambda = Math.max(adjHomeLambda, adjAwayLambda);
-  const evenness = Math.max(0, 1 - diffLambda / (maxLambda || 1)); // 0=very uneven, 1=even
-  const drawBoost = 1 + (0.18 * evenness); // max 18% boost for even matches
-  for (let i = 0; i < scoreMatrix.length; i++) {
-    scoreMatrix[i][i] *= drawBoost;
-  }
+  const evenness = Math.max(0, 1 - diffLambda / (maxLambda || 1));
+  const drawBoost = 1 + (0.18 * evenness);
+  for (let i = 0; i < scoreMatrix.length; i++) scoreMatrix[i][i] *= drawBoost;
+
   // Re-normalize after draw boost
   matrixSum = 0;
   for (let i = 0; i < scoreMatrix.length; i++) {
-    for (let j = 0; j < scoreMatrix[i].length; j++) {
-      matrixSum += scoreMatrix[i][j];
-    }
+    for (let j = 0; j < scoreMatrix[i].length; j++) matrixSum += scoreMatrix[i][j];
   }
   if (matrixSum > 0) {
     for (let i = 0; i < scoreMatrix.length; i++) {
-      for (let j = 0; j < scoreMatrix[i].length; j++) {
-        scoreMatrix[i][j] /= matrixSum;
+      for (let j = 0; j < scoreMatrix[i].length; j++) scoreMatrix[i][j] /= matrixSum;
+    }
+  }
+
+  // ─── Step 10: Extract result probabilities ─────────────────────────────────
+  let rawProbs = calcResultProbs(scoreMatrix);
+
+  // ─── Step 11: H2H Direct Probability Adjustment (Upgrade 3) ───────────────
+  if (h2hRecentResults && h2hRecentResults.length >= 3) {
+    const h2hTotal = h2hRecentResults.length;
+    let h2hHomeWins = 0, h2hDraws = 0, h2hAwayWins = 0;
+    for (const r of h2hRecentResults) {
+      if (r.homeGoals > r.awayGoals) h2hHomeWins++;
+      else if (r.homeGoals === r.awayGoals) h2hDraws++;
+      else h2hAwayWins++;
+    }
+    const h2hHomePct = h2hHomeWins / h2hTotal;
+    const h2hDrawPct = h2hDraws / h2hTotal;
+    const h2hAwayPct = h2hAwayWins / h2hTotal;
+
+    // Only apply H2H adjustment if one side clearly dominates (>= 60% win rate)
+    const H2H_WEIGHT = 0.20; // blend 20% H2H into Poisson probabilities
+    if (h2hHomePct >= 0.6 || h2hAwayPct >= 0.6) {
+      const blendedHome = (1 - H2H_WEIGHT) * rawProbs.home + H2H_WEIGHT * h2hHomePct;
+      const blendedDraw = (1 - H2H_WEIGHT) * rawProbs.draw + H2H_WEIGHT * h2hDrawPct;
+      const blendedAway = (1 - H2H_WEIGHT) * rawProbs.away + H2H_WEIGHT * h2hAwayPct;
+      const bTotal = blendedHome + blendedDraw + blendedAway;
+      rawProbs = { home: blendedHome / bTotal, draw: blendedDraw / bTotal, away: blendedAway / bTotal };
+      const dominantSide = h2hHomePct >= 0.6 ? 'Đội nhà' : 'Đội khách';
+      factors.push({ factor: `H2H dominance — ${dominantSide} thắng ${Math.round(Math.max(h2hHomePct, h2hAwayPct) * 100)}% lịch sử đối đầu`, impact: H2H_WEIGHT, icon: '🔁' });
+      console.log(`[Predictor] H2H adj applied: home=${h2hHomePct.toFixed(2)}, draw=${h2hDrawPct.toFixed(2)}, away=${h2hAwayPct.toFixed(2)}`);
+    }
+  }
+
+  // ─── Step 12: Blend with ELO adjustment ───────────────────────────────────
+  const eloWinProb = eloToProbabilityAdjustment(homeElo, awayElo);
+  const resultProbs = blendEloAdjustment(rawProbs, eloWinProb);
+
+  // ─── Step 12.5: Align Score Matrix with Blended Result Probabilities ──────
+  // We scale the partitions of the matrix (Home Win, Draw, Away Win) 
+  // so their sums match the final blended 1X2 probabilities (resultProbs).
+  let currentSumHome = 0, currentSumDraw = 0, currentSumAway = 0;
+  for (let i = 0; i < scoreMatrix.length; i++) {
+    for (let j = 0; j < scoreMatrix[i].length; j++) {
+      if (i > j) currentSumHome += scoreMatrix[i][j];
+      else if (i === j) currentSumDraw += scoreMatrix[i][j];
+      else currentSumAway += scoreMatrix[i][j];
+    }
+  }
+
+  // Apply scaling factors to ensure consistency
+  for (let i = 0; i < scoreMatrix.length; i++) {
+    for (let j = 0; j < scoreMatrix[i].length; j++) {
+      if (i > j && currentSumHome > 0) {
+        scoreMatrix[i][j] *= (resultProbs.home / currentSumHome);
+      } else if (i === j && currentSumDraw > 0) {
+        scoreMatrix[i][j] *= (resultProbs.draw / currentSumDraw);
+      } else if (i < j && currentSumAway > 0) {
+        scoreMatrix[i][j] *= (resultProbs.away / currentSumAway);
       }
     }
   }
 
-
-  // Step 6: Extract result probabilities
-  const rawProbs = calcResultProbs(scoreMatrix);
-
-  // Step 7: Blend with ELO adjustment
-  const eloWinProb = eloToProbabilityAdjustment(homeElo, awayElo);
-  const resultProbs = blendEloAdjustment(rawProbs, eloWinProb);
-
-  // Step 8: Over/Under and most likely score
+  // ─── Step 13: Over/Under and most likely score ────────────────────────────
   const overUnder = calcOverUnder(scoreMatrix);
-  const predictedScore = getMostLikelyScore(scoreMatrix);
+  const predictedScore = getMostLikelyScoreConsistent(scoreMatrix, resultProbs);
 
-  // Fix 3 — Tài/Xỉu threshold
   const expectedTotalGoals = adjHomeLambda + adjAwayLambda;
   let predictedOU = 'Xỉu';
   if (expectedTotalGoals > 2.7) {
@@ -349,7 +459,6 @@ export function predict(params) {
     predictedOU = overUnder.over > 0.5 ? 'Tài' : 'Xỉu';
   }
 
-  // Calculate stats for confidence quality
   const confidenceHomeStats = homeRecentMatches && homeRecentMatches.length > 0
     ? { matches_played: homeRecentMatches.length }
     : homeStats;
@@ -358,7 +467,7 @@ export function predict(params) {
     : awayStats;
   const confidence = calcConfidence(resultProbs, confidenceHomeStats, confidenceAwayStats);
 
-  // Calculate goals_last5 and clean_sheet_rate if not provided
+  // Calculate goals_last5 and clean_sheet_rate
   let homeGoalsLast5 = params.homeGoalsLast5;
   let homeCleanSheetRate = params.homeCleanSheetRate;
   if (homeRecentMatches && homeRecentMatches.length > 0 && homeIdNum !== null && homeGoalsLast5 === undefined) {
@@ -405,6 +514,8 @@ export function predict(params) {
     factors,
     scoreMatrix,
     lambdas: { home: Math.round(adjHomeLambda * 100) / 100, away: Math.round(adjAwayLambda * 100) / 100 },
+    homeAdvantage: Math.round(homeAdvantage * 1000) / 1000,
+    isNeutral,
     goals_last5: {
       home: homeGoalsLast5 || 0,
       away: awayGoalsLast5 || 0,

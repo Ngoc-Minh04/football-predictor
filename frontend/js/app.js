@@ -229,7 +229,12 @@ function restorePredictionCard() {
 
 // ── Initialization ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  matchDateInput.value = new Date().toISOString().split('T')[0];
+  // Lấy ngày hôm nay theo múi giờ địa phương (local time) thay vì UTC
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  matchDateInput.value = `${yyyy}-${mm}-${dd}`;
 
   await loadTeams('PL');
 
@@ -294,6 +299,7 @@ async function runPrediction() {
       isImportantMatch: document.getElementById('isImportant').checked,
       homeFatigue:     document.getElementById('homeFatigue').checked,
       awayFatigue:     document.getElementById('awayFatigue').checked,
+      isHomeAdvantage: document.getElementById('isHomeAdvantage').checked,
     };
 
     const [homeFormResult, awayFormResult] = await Promise.allSettled([
@@ -312,6 +318,7 @@ async function runPrediction() {
         situationalFactors,
         homeForm: homeFormResult.status === 'fulfilled' ? homeFormResult.value.join('') : '',
         awayForm: awayFormResult.status === 'fulfilled' ? awayFormResult.value.join('') : '',
+        isNeutral: leagueSelect.value === 'WC' || leagueSelect.value === 'EC',
       }),
     });
 

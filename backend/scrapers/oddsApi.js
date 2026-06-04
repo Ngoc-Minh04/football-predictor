@@ -32,10 +32,21 @@ const TEAM_NAME_MAPPING = {
   "Southampton": "Southampton FC"
 };
 
+const SPORT_KEY_MAPPING = {
+  'PL':  'soccer_epl',          // English Premier League
+  'PD':  'soccer_spain_la_liga', // La Liga
+  'BL1': 'soccer_germany_bundesliga', // Bundesliga
+  'SA':  'soccer_italy_serie_a', // Serie A
+  'FL1': 'soccer_france_ligue_one', // Ligue 1
+  'WC':  'soccer_fifa_world_cup', // FIFA World Cup
+  'CL':  'soccer_uefa_champs_league', // Champions League
+};
+
 /**
  * Fetch odds and save to DB
+ * @param {string} league - league code (default: 'PL' = EPL)
  */
-export async function fetchAndStoreOdds() {
+export async function fetchAndStoreOdds(league = 'PL') {
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey || apiKey === 'your_key_here') {
     console.warn('[Odds] ODDS_API_KEY is not configured in .env. Skipping API fetch.');
@@ -43,9 +54,10 @@ export async function fetchAndStoreOdds() {
   }
 
   const db = await getDatabase();
-  const url = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds`;
+  const sportKey = SPORT_KEY_MAPPING[league] || 'soccer_epl';
+  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds`;
 
-  console.log(`[Odds] Fetching odds from: ${url}`);
+  console.log(`[Odds] Fetching odds from: ${url} (league=${league})`);
 
   try {
     const res = await axios.get(url, {
@@ -179,10 +191,31 @@ export async function fetchAndStoreOdds() {
 }
 
 /**
- * Blend Poisson probabilities with bookmaker implied probabilities (0.55 / 0.45 weight)
+ * Blend Poisson probabilities with bookmaker implied probabilities
+ * Upgrade 4: Dynamic blend weight based on model confidence:
+ *   confidence >= 0.65 → 70% model, 30% bookmaker (trust model more)
+ *   confidence <  0.45 → 35% model, 65% bookmaker (trust bookmaker more)
+ *   otherwise          → 55% model, 45% bookmaker (default)
+ * @param {object} poissonResult
+ * @param {object} poissonOU
+ * @param {number} matchId
+ * @param {object} db
+ * @param {number} confidence - model confidence score (0-1), optional
  */
-export async function blendWithBookmaker(poissonResult, poissonOU, matchId, db) {
+export async function blendWithBookmaker(poissonResult, poissonOU, matchId, db, confidence = 0.55) {
   const database = db || await getDatabase();
+
+  // Upgrade 4: Calculate dynamic model weight
+  let modelWeight;
+  if (confidence >= 0.65) {
+    modelWeight = 0.70; // High confidence: trust model
+  } else if (confidence < 0.45) {
+    modelWeight = 0.35; // Low confidence: trust bookmaker
+  } else {
+    modelWeight = 0.55; // Mid confidence: balanced
+  }
+  const bookWeight = 1 - modelWeight;
+
   try {
     // Check cache within 6 hours
     const odds = await queryGet(database,
@@ -193,23 +226,23 @@ export async function blendWithBookmaker(poissonResult, poissonOU, matchId, db) 
 
     if (odds) {
       const blendedResult = {
-        home: 0.55 * poissonResult.home + 0.45 * odds.home_prob,
-        draw: 0.55 * poissonResult.draw + 0.45 * odds.draw_prob,
-        away: 0.55 * poissonResult.away + 0.45 * odds.away_prob
-      };
-      
-      const blendedOU = {
-        over25: 0.55 * poissonOU.over25 + 0.45 * odds.over25_prob,
-        under25: 0.55 * poissonOU.under25 + 0.45 * odds.under25_prob,
-        prediction: (0.55 * poissonOU.over25 + 0.45 * odds.over25_prob) > 0.5 ? 'Tài' : 'Xỉu'
+        home: modelWeight * poissonResult.home + bookWeight * odds.home_prob,
+        draw: modelWeight * poissonResult.draw + bookWeight * odds.draw_prob,
+        away: modelWeight * poissonResult.away + bookWeight * odds.away_prob
       };
 
-      return { result: blendedResult, overUnder: blendedOU, blended: true };
+      const blendedOU = {
+        over25: modelWeight * poissonOU.over25 + bookWeight * odds.over25_prob,
+        under25: modelWeight * poissonOU.under25 + bookWeight * odds.under25_prob,
+        prediction: (modelWeight * poissonOU.over25 + bookWeight * odds.over25_prob) > 0.5 ? 'Tài' : 'Xỉu'
+      };
+
+      return { result: blendedResult, overUnder: blendedOU, blended: true, modelWeight };
     }
   } catch (e) {
     console.error('[Odds] blendWithBookmaker error:', e.message);
   }
-  return { result: poissonResult, overUnder: poissonOU, blended: false };
+  return { result: poissonResult, overUnder: poissonOU, blended: false, modelWeight };
 }
 
 // Self-run entry point

@@ -26,6 +26,7 @@ router.post('/prematch', validateMatch, async (req, res) => {
       homeForm = '',
       awayForm = '',
       h2h = '',
+      isNeutral = false,          // Upgrade 2: World Cup / neutral venue
     } = req.body;
 
     if (!homeTeamId || !awayTeamId) {
@@ -81,17 +82,20 @@ router.post('/prematch', validateMatch, async (req, res) => {
     );
 
     let h2hAvgGoals = 0;
+    let h2hRecentResults = [];
     if (h2hMatches.length > 0) {
       const totalGoals = h2hMatches.reduce((sum, m) => sum + m.score_home + m.score_away, 0);
       h2hAvgGoals = totalGoals / h2hMatches.length;
+      // Upgrade 3: pass raw H2H results for win/draw/loss dominance check
+      h2hRecentResults = h2hMatches.map(m => ({ homeGoals: m.score_home, awayGoals: m.score_away }));
     }
 
-    // Fetch 6 recent finished matches for home and away teams
+    // Fetch 8 recent finished matches for home and away teams (mixed venue)
     const homeRecentMatches = await queryAll(db,
       `SELECT * FROM matches
        WHERE (home_team_id = ? OR away_team_id = ?)
          AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
-       ORDER BY date DESC LIMIT 6`,
+       ORDER BY date DESC LIMIT 8`,
       [homeTeamId, homeTeamId]
     );
 
@@ -99,8 +103,26 @@ router.post('/prematch', validateMatch, async (req, res) => {
       `SELECT * FROM matches
        WHERE (home_team_id = ? OR away_team_id = ?)
          AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
-       ORDER BY date DESC LIMIT 6`,
+       ORDER BY date DESC LIMIT 8`,
       [awayTeamId, awayTeamId]
+    );
+
+    // Upgrade 1: venue-specific — home team's home-only matches
+    const homeHomeRecentMatches = await queryAll(db,
+      `SELECT * FROM matches
+       WHERE home_team_id = ?
+         AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
+       ORDER BY date DESC LIMIT 6`,
+      [homeTeamId]
+    );
+
+    // Upgrade 1: venue-specific — away team's away-only matches
+    const awayAwayRecentMatches = await queryAll(db,
+      `SELECT * FROM matches
+       WHERE away_team_id = ?
+         AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
+       ORDER BY date DESC LIMIT 6`,
+      [awayTeamId]
     );
 
     const targetDate = matchDate || new Date().toISOString().split('T')[0];
@@ -142,6 +164,8 @@ router.post('/prematch', validateMatch, async (req, res) => {
       awayStats,
       homeRecentMatches,
       awayRecentMatches,
+      homeHomeRecentMatches,   // Upgrade 1
+      awayAwayRecentMatches,   // Upgrade 1
       homeTeamId,
       awayTeamId,
       homeElo: homeTeam.elo_rating || 1500,
@@ -150,19 +174,25 @@ router.post('/prematch', validateMatch, async (req, res) => {
       leagueAvgAway,
       situationalFactors,
       h2hAvgGoals,
+      h2hRecentResults,        // Upgrade 3
       homeRestDays,
       awayRestDays,
       homeWinRate,
+      matchDate: targetDate,
+      isNeutral,               // Upgrade 2
     });
 
-    // Blend with Bookmaker Odds if available
+    // Upgrade 4: Flexible odds blending based on model confidence
+    // High confidence (>= 0.65) → trust model more (70/30)
+    // Low confidence  (<  0.45) → trust bookmaker more (35/65)
+    // Mid confidence             → 55/45 (default)
     if (matchId) {
-      const blend = await blendWithBookmaker(prediction.result, prediction.overUnder, matchId, db);
+      const blend = await blendWithBookmaker(prediction.result, prediction.overUnder, matchId, db, prediction.confidence);
       prediction.result = blend.result;
       prediction.overUnder = blend.overUnder;
       if (blend.blended) {
         prediction.factors = prediction.factors || [];
-        prediction.factors.push({ factor: 'Tích hợp tỷ lệ nhà cái (Odds API)', impact: 0.45, icon: '📈' });
+        prediction.factors.push({ factor: `Tích hợp tỷ lệ nhà cái (Odds API, trọng số model ${Math.round(blend.modelWeight * 100)}%)`, impact: Math.round((1 - blend.modelWeight) * 100) / 100, icon: '📈' });
       }
     }
 

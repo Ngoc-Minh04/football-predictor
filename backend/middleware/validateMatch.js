@@ -32,7 +32,7 @@ export async function validateMatch(req, res, next) {
     const db = await getDatabase();
 
     // ── Check đội tồn tại ────────────────────────────────────────
-    const homeTeam = await queryGet(db, 'SELECT id, name FROM teams WHERE id = ?', [homeTeamId]);
+    const homeTeam = await queryGet(db, 'SELECT id, name, league FROM teams WHERE id = ?', [homeTeamId]);
     if (!homeTeam) {
       return res.status(404).json({
         error: 'Không tìm thấy đội nhà',
@@ -40,7 +40,7 @@ export async function validateMatch(req, res, next) {
       });
     }
 
-    const awayTeam = await queryGet(db, 'SELECT id, name FROM teams WHERE id = ?', [awayTeamId]);
+    const awayTeam = await queryGet(db, 'SELECT id, name, league FROM teams WHERE id = ?', [awayTeamId]);
     if (!awayTeam) {
       return res.status(404).json({
         error: 'Không tìm thấy đội khách',
@@ -54,7 +54,11 @@ export async function validateMatch(req, res, next) {
       [homeTeamId]
     );
 
-    if (!homeStats || (homeStats.matches_played || 0) < MIN_MATCHES) {
+    // Đối với World Cup (WC) hoặc Euro (EC), cho phép bỏ qua kiểm tra số trận tối thiểu
+    const isNeutralCup = (homeTeam.league && (homeTeam.league.includes('WC') || homeTeam.league.includes('EC'))) ||
+                         (awayTeam.league && (awayTeam.league.includes('WC') || awayTeam.league.includes('EC')));
+
+    if (!isNeutralCup && (!homeStats || (homeStats.matches_played || 0) < MIN_MATCHES)) {
       return res.status(422).json({
         error: 'Dữ liệu đội nhà không đủ',
         detail: `${homeTeam.name} chỉ có ${homeStats?.matches_played || 0} trận thống kê, cần ít nhất ${MIN_MATCHES} trận để dự đoán chính xác. Hãy chạy 'npm run seed' để nạp dữ liệu.`,
@@ -62,11 +66,11 @@ export async function validateMatch(req, res, next) {
     }
 
     const awayStats = await queryGet(db,
-      'SELECT matches_played FROM team_stats WHERE team_id = ? ORDER BY season DESC LIMIT 1',
+      'SELECT * FROM team_stats WHERE team_id = ? ORDER BY season DESC LIMIT 1',
       [awayTeamId]
     );
 
-    if (!awayStats || (awayStats.matches_played || 0) < MIN_MATCHES) {
+    if (!isNeutralCup && (!awayStats || (awayStats.matches_played || 0) < MIN_MATCHES)) {
       return res.status(422).json({
         error: 'Dữ liệu đội khách không đủ',
         detail: `${awayTeam.name} chỉ có ${awayStats?.matches_played || 0} trận thống kê, cần ít nhất ${MIN_MATCHES} trận để dự đoán chính xác. Hãy chạy 'npm run seed' để nạp dữ liệu.`,

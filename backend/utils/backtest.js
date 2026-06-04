@@ -72,7 +72,7 @@ async function runBacktest() {
         h2hAvgGoals = totalGoals / h2hMatches.length;
       }
 
-      // 6 trận gần nhất trước ngày trận đấu cho home team
+      // 8 trận gần nhất (mixed home+away) trước ngày trận đấu
       const homeRecentMatches = await queryAll(db,
         `SELECT * FROM matches
          WHERE (home_team_id = ? OR away_team_id = ?)
@@ -82,7 +82,6 @@ async function runBacktest() {
         [homeId, homeId, matchDate]
       );
 
-      // 6 trận gần nhất trước ngày trận đấu cho away team
       const awayRecentMatches = await queryAll(db,
         `SELECT * FROM matches
          WHERE (home_team_id = ? OR away_team_id = ?)
@@ -91,6 +90,29 @@ async function runBacktest() {
          ORDER BY date DESC LIMIT 8`,
         [awayId, awayId, matchDate]
       );
+
+      // Upgrade 1: 6 trận sân nhà của Home team (chỉ khi đá tại sân nhà)
+      const homeHomeRecentMatches = await queryAll(db,
+        `SELECT * FROM matches
+         WHERE home_team_id = ?
+           AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
+           AND date < ?
+         ORDER BY date DESC LIMIT 6`,
+        [homeId, matchDate]
+      );
+
+      // Upgrade 1: 6 trận sân khách của Away team (chỉ khi đá sân khách)
+      const awayAwayRecentMatches = await queryAll(db,
+        `SELECT * FROM matches
+         WHERE away_team_id = ?
+           AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
+           AND date < ?
+         ORDER BY date DESC LIMIT 6`,
+        [awayId, matchDate]
+      );
+
+      // Upgrade 3: H2H kết quả gần nhất (score để tính win/draw/loss rate)
+      const h2hRecentResults = h2hMatches.map(hm => ({ homeGoals: hm.score_home, awayGoals: hm.score_away }));
 
       // Tính rest days trước trận đấu
       function calcRestDays(target, last) {
@@ -131,6 +153,8 @@ async function runBacktest() {
         awayStats,
         homeRecentMatches,
         awayRecentMatches,
+        homeHomeRecentMatches,   // Upgrade 1
+        awayAwayRecentMatches,   // Upgrade 1
         homeTeamId: homeId,
         awayTeamId: awayId,
         homeElo: m.home_elo || 1500,
@@ -139,10 +163,12 @@ async function runBacktest() {
         leagueAvgAway,
         situationalFactors: {},
         h2hAvgGoals,
+        h2hRecentResults,        // Upgrade 3
         homeRestDays,
         awayRestDays,
         homeWinRate,
         matchDate,
+        isNeutral: false,        // Upgrade 2: EPL không phải sân trung lập
       });
 
       // Blend with Bookmaker Odds if available
