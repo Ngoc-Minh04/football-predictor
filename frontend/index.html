@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⚽ Football Predictor — AI-Powered Match Prediction</title>
+  <meta name="description" content="Dự đoán kết quả bóng đá thông minh kết hợp mô hình Poisson, Dixon-Coles, ELO và phân tích từ Claude AI" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ═══ HEADER ═══════════════════════════════════════════════════════════ -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-icon">⚽</span>
+        <div>
+          <h1 class="brand-title">Football Predictor</h1>
+          <p class="brand-sub">AI-Powered · Poisson · ELO · Dixon-Coles</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="live-indicator" id="liveIndicator">
+          <span class="live-dot"></span>
+          <span>LIVE</span>
+        </div>
+        <div class="ws-status" id="wsStatus" title="WebSocket Status">●</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
+  <main class="main">
+    <!-- ── Match Selector ─────────────────────────────────────────────────── -->
+    <section class="card selector-card" id="matchSelector">
+      <h2 class="card-title">🎯 Chọn Trận Đấu</h2>
+      <div class="selector-grid">
+        <div class="field-group">
+          <label for="leagueSelect">Giải đấu</label>
+          <select id="leagueSelect" class="select-field">
+            <option value="PL">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League</option>
+            <option value="PD">🇪🇸 La Liga</option>
+            <option value="BL1">🇩🇪 Bundesliga</option>
+            <option value="SA">🇮🇹 Serie A</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="homeTeamSelect">Đội nhà</label>
+          <select id="homeTeamSelect" class="select-field">
+            <option value="">-- Chọn đội nhà --</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="awayTeamSelect">Đội khách</label>
+          <select id="awayTeamSelect" class="select-field">
+            <option value="">-- Chọn đội khách --</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="matchDate">Ngày thi đấu</label>
+          <input type="date" id="matchDate" class="select-field" />
+        </div>
+      </div>
+
+      <!-- Situational Factors -->
+      <div class="factors-row">
+        <label class="factor-toggle" id="toggleDerby">
+          <input type="checkbox" id="isDerby" />
+          <span class="toggle-track"></span>
+          <span>🔥 Derby</span>
+        </label>
+        <label class="factor-toggle" id="toggleImportant">
+          <input type="checkbox" id="isImportant" />
+          <span class="toggle-track"></span>
+          <span>🏆 Trận quan trọng</span>
+        </label>
+        <label class="factor-toggle" id="toggleHomeFatigue">
+          <input type="checkbox" id="homeFatigue" />
+          <span class="toggle-track"></span>
+          <span>😴 Đội nhà mệt</span>
+        </label>
+        <label class="factor-toggle" id="toggleAwayFatigue">
+          <input type="checkbox" id="awayFatigue" />
+          <span class="toggle-track"></span>
+          <span>😴 Đội khách mệt</span>
+        </label>
+      </div>
+
+      <div class="btn-row">
+        <button id="predictBtn" class="btn btn-primary">
+          <span class="btn-icon">🔮</span>
+          Dự đoán ngay
+        </button>
+        <button id="liveModeBtn" class="btn btn-secondary" title="Chế độ theo dõi trực tiếp">
+          📡 Live Mode
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Loading State ──────────────────────────────────────────────────── -->
+    <div id="loadingState" class="loading-state hidden">
+      <div class="spinner"></div>
+      <p>Đang tính toán dự đoán...</p>
+    </div>
+
+    <!-- ── Prediction Results ─────────────────────────────────────────────── -->
+    <section id="predictionResults" class="hidden">
+      <!-- Score Card -->
+      <div class="results-grid">
+        <div class="card prediction-card" id="predictionCard">
+          <h2 class="card-title">📊 Kết Quả Dự Đoán</h2>
+          <div class="match-header">
+            <div class="team-block home">
+              <span class="team-name" id="homeTeamName">--</span>
+              <div class="form-badges" id="homeFormBadges"></div>
+            </div>
+            <div class="score-block">
+              <div class="predicted-score">
+                <span id="scoreHome" class="score-digit">0</span>
+                <span class="score-sep">:</span>
+                <span id="scoreAway" class="score-digit">0</span>
+              </div>
+              <div class="score-label">Tỷ số dự đoán</div>
+              <div class="confidence-badge" id="confidenceBadge">
+                Độ tin cậy: <strong id="confidenceValue">--</strong>
+              </div>
+            </div>
+            <div class="team-block away">
+              <span class="team-name" id="awayTeamName">--</span>
+              <div class="form-badges" id="awayFormBadges"></div>
+            </div>
+          </div>
+
+          <!-- 1X2 Probability Bars -->
+          <div class="prob-bars">
+            <div class="prob-bar-row">
+              <span class="prob-label">Đội nhà thắng</span>
+              <div class="prob-track">
+                <div class="prob-fill home-fill" id="probHome"></div>
+              </div>
+              <span class="prob-value" id="probHomeVal">--</span>
+            </div>
+            <div class="prob-bar-row">
+              <span class="prob-label">Hòa</span>
+              <div class="prob-track">
+                <div class="prob-fill draw-fill" id="probDraw"></div>
+              </div>
+              <span class="prob-value" id="probDrawVal">--</span>
+            </div>
+            <div class="prob-bar-row">
+              <span class="prob-label">Đội khách thắng</span>
+              <div class="prob-track">
+                <div class="prob-fill away-fill" id="probAway"></div>
+              </div>
+              <span class="prob-value" id="probAwayVal">--</span>
+            </div>
+          </div>
+
+          <!-- Over/Under -->
+          <div class="ou-row">
+            <div class="ou-block">
+              <span class="ou-label">Over 2.5</span>
+              <span class="ou-value" id="over25">--</span>
+            </div>
+            <div class="ou-divider"></div>
+            <div class="ou-block">
+              <span class="ou-label">Under 2.5</span>
+              <span class="ou-value" id="under25">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Analysis -->
+        <div class="card ai-card">
+          <h2 class="card-title">🤖 Claude AI Phân Tích</h2>
+          <div class="risk-badge" id="riskBadge">--</div>
+          <p class="ai-summary" id="aiSummary">Chọn trận đấu và nhấn Dự đoán để xem phân tích...</p>
+          <div class="ai-recommendation" id="aiRecommendation"></div>
+        </div>
+      </div>
+
+      <!-- Score Matrix + Factors -->
+      <div class="results-grid second-row">
+        <!-- 7x7 Heatmap -->
+        <div class="card matrix-card">
+          <h2 class="card-title">🔢 Ma Trận Tỷ Số (Xác suất %)</h2>
+          <div id="scoreMatrixContainer" class="matrix-wrapper"></div>
+        </div>
+
+        <!-- Key Factors -->
+        <div class="card factors-card">
+          <h2 class="card-title">⚖️ Các Yếu Tố Ảnh Hưởng</h2>
+          <div id="factorsList" class="factors-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Live Mode Panel ────────────────────────────────────────────────── -->
+    <section id="livePanel" class="card live-panel hidden">
+      <h2 class="card-title">📡 Theo Dõi Trực Tiếp</h2>
+      <div class="live-grid">
+        <div class="live-score-block">
+          <div class="live-score-display">
+            <span id="liveHomeScore">0</span>
+            <span>:</span>
+            <span id="liveAwayScore">0</span>
+          </div>
+          <div class="live-minute" id="liveMinute">0'</div>
+        </div>
+        <div class="live-controls">
+          <div class="field-group">
+            <label>Phút hiện tại</label>
+            <input type="number" id="liveMinuteInput" class="select-field" min="1" max="120" value="45" />
+          </div>
+          <div class="field-group">
+            <label>Tỷ số</label>
+            <div class="score-input-row">
+              <input type="number" id="liveScoreHome" class="select-field score-input" min="0" value="0" />
+              <span>:</span>
+              <input type="number" id="liveScoreAway" class="select-field score-input" min="0" value="0" />
+            </div>
+          </div>
+          <div class="event-buttons">
+            <button class="btn btn-event" id="btnGoalHome">⚽ Đội nhà ghi bàn</button>
+            <button class="btn btn-event" id="btnGoalAway">⚽ Đội khách ghi bàn</button>
+            <button class="btn btn-event btn-red" id="btnRedHome">🟥 Thẻ đỏ đội nhà</button>
+            <button class="btn btn-event btn-red" id="btnRedAway">🟥 Thẻ đỏ đội khách</button>
+          </div>
+          <button class="btn btn-primary" id="updateLiveBtn">🔄 Cập nhật</button>
+        </div>
+        <div class="live-probs-display">
+          <h3>Xác suất hiện tại</h3>
+          <div id="liveProbBars" class="prob-bars"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>⚽ Football Predictor · Poisson + Dixon-Coles + ELO + Claude AI · Dữ liệu: football-data.org & understat.com</p>
+  </footer>
+
+  <!-- Toast Container -->
+  <div id="toastContainer"></div>
+
+  <script src="js/charts.js"></script>
+  <script src="js/websocket.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
