@@ -13,7 +13,8 @@
     "seed-cl": "node scrapers/seedHistorical.js CL",
     "seed-xg": "node scrapers/understat.js",
     "fetch-odds": "node scrapers/oddsApi.js",
-    "backtest": "node utils/backtest.js"
+    "backtest": "node utils/backtest.js",
+    "tune": "node scratch/auto_tune.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.0",

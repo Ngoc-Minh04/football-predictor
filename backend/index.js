@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDatabase } from './db/database.js';
+import { runMigrations } from './db/migrations.js';
 import { seedSampleData } from './scrapers/footballData.js';
 import { startScheduler } from './scrapers/scheduler.js';
 
@@ -102,6 +103,9 @@ async function start() {
     // Initialize DB
     const db = await getDatabase();
     console.log('[Server] Database connected.');
+
+    // Run DB migrations
+    await runMigrations();
 
     // Seed sample data if no teams exist yet
     const teamCount = await new Promise((res, rej) =>

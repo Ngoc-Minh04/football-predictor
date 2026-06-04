@@ -1,0 +1,16 @@
+{
+  "decay": 0.006,
+  "bivariateWeight": 0.7,
+  "nbR": 8,
+  "mleWeight": 0.23458706537780338,
+  "rollingWeight": 0.4296139750678836,
+  "xgWeight": 0.2660757700616381,
+  "rollingWeightNonDC": 0.6123735919532223,
+  "xgWeightNonDC": 0.10209889154224258,
+  "meanWeightNonDC": 0.2855275165045351,
+  "eloWeight": 0.35,
+  "homeAdvFactor": 0.9012195751087428,
+  "drawBoostMax": 0.3,
+  "lambda3": 0.15,
+  "eloLambdaDivisor": 0
+}

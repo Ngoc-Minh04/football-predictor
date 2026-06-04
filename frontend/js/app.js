@@ -12,6 +12,136 @@ let liveEvents = [];
 let currentMatchId = null;
 let isLiveMode = false;
 
+const SQUAD_STARS = {
+  "Argentina": ["Messi", "Lautaro", "Alvarez", "Di Maria", "Fernandez", "Mac Allister"],
+  "France": ["Mbappe", "Griezmann", "Dembele", "Giroud", "Thuram"],
+  "England": ["Kane", "Bellingham", "Saka", "Foden", "Palmer"],
+  "Brazil": ["Vinicius", "Neymar", "Rodrygo", "Richarlison", "Raphinha"],
+  "Portugal": ["Ronaldo", "Fernandes", "Silva", "Leao", "Felix"],
+  "Spain": ["Yamal", "Morata", "Olmo", "Williams", "Torres"],
+  "Germany": ["Musiala", "Wirtz", "Havertz", "Fullkrug", "Sane"],
+  "Netherlands": ["Depay", "Gakpo", "Simons", "De Jong", "Van Dijk"],
+  "Italy": ["Chiesa", "Barella", "Scamacca", "Retegui", "Donnarumma"],
+  "Belgium": ["De Bruyne", "Lukaku", "Doku", "Trossard"],
+  "Uruguay": ["Nunez", "Suarez", "Valverde", "Araujo"],
+  "Croatia": ["Modric", "Kramaric", "Kovacic", "Perisic"],
+  "Japan": ["Mitoma", "Kubo", "Endo", "Minamino"],
+  "USA": ["Pulisic", "Balogun", "Weah", "McKennie"],
+  "Mexico": ["Gimenez", "Lozano", "Alvarez", "Martin"],
+  "Colombia": ["Diaz", "Rodriguez", "Borre", "Arias"],
+  "Morocco": ["Ziyech", "En-Nesyri", "Hakimi", "Diaz", "Amrabat"],
+  "Senegal": ["Mane", "Jackson", "Sarr", "Koulibaly"],
+  "Denmark": ["Hojlund", "Eriksen", "Wind", "Christensen"],
+  "Switzerland": ["Embolo", "Xhaka", "Shaqiri", "Akanji"],
+  "South Korea": ["Son", "Hwang", "Lee", "Cho"],
+  "Canada": ["David", "Davies", "Larin", "Buchanan"],
+  "Ecuador": ["Valencia", "Caicedo", "Estupinan", "Rodriguez"],
+  "Ukraine": ["Dovbyk", "Mudryk", "Tsygankov", "Zinchenko"],
+  "Poland": ["Lewandowski", "Zielinski", "Swiderski", "Szczesny"],
+  "Turkey": ["Yilmaz", "Guler", "Calhanoglu", "Akturkoglu"],
+  "Austria": ["Sabitzer", "Gregoritsch", "Laimer", "Baumgartner"],
+  "Sweden": ["Gyokeres", "Isak", "Kulusevski", "Elanga"],
+  "Nigeria": ["Osimhen", "Lookman", "Boniface", "Iwobi"],
+  "Ivory Coast": ["Haller", "Adingra", "Kessie", "Singo"],
+  "Algeria": ["Mahrez", "Bounedjah", "Bennacer", "Aouar"],
+  "Egypt": ["Salah", "Marmoush", "Mostafa", "Trezeguet"],
+  "Saudi Arabia": ["Al-Dawsari", "Al-Shehri", "Al-Buraikan"],
+  "Australia": ["Duke", "Boyle", "Goodwin", "Irvine"],
+  "Cameroon": ["Aboubakar", "Toko Ekambi", "Mbeumo", "Anguissa"],
+  "Liverpool FC": ["Salah", "Diaz", "Jota", "Nunez", "Gakpo"],
+  "Manchester City FC": ["Haaland", "De Bruyne", "Foden", "Silva"],
+  "Arsenal FC": ["Saka", "Odegaard", "Havertz", "Martinelli"],
+  "Chelsea FC": ["Palmer", "Jackson", "Madueke", "Nkunku"],
+  "Manchester United FC": ["Fernandes", "Rashford", "Hojlund", "Garnacho"],
+  "Tottenham Hotspur FC": ["Son", "Richarlison", "Kulusevski", "Maddison"],
+  "Aston Villa FC": ["Watkins", "Bailey", "McGinn"],
+  "Newcastle United FC": ["Isak", "Gordon", "Guimaraes"]
+};
+
+const TEAM_ALIAS = {
+  "bồ đào nha": "portugal",
+  "bố đào nha": "portugal",
+  "pháp": "france",
+  "anh": "england",
+  "tây ban nha": "spain",
+  "đức": "germany",
+  "hà lan": "netherlands",
+  "ý": "italy",
+  "bỉ": "belgium",
+  "nhật bản": "japan",
+  "mỹ": "usa",
+  "united states": "usa",
+  "colombia": "colombia",
+  "ma-rốc": "morocco",
+  "morocco": "morocco",
+  "senegal": "senegal",
+  "đan mạch": "denmark",
+  "thụy sĩ": "switzerland",
+  "hàn quốc": "south korea",
+  "south korea": "south korea",
+  "canada": "canada",
+  "ecuador": "ecuador",
+  "ukraine": "ukraine",
+  "ba lan": "poland",
+  "thổ nhĩ kỳ": "turkey",
+  "áo": "austria",
+  "thụy điển": "sweden",
+  "nigeria": "nigeria",
+  "bờ biển ngà": "ivory coast",
+  "algeria": "algeria",
+  "ai cập": "egypt",
+  "ả rập xê út": "saudi arabia",
+  "úc": "australia",
+  "cameroon": "cameroon",
+  "man city": "manchester city",
+  "man utd": "manchester united",
+  "leeds utd": "leeds united",
+  "sheffield utd": "sheffield united",
+  "wolves": "wolverhampton",
+  "west ham": "west ham united"
+};
+
+function updateSquadStars(selectEl, playersContainerId, teamLabelId, roleLabel) {
+  const container = document.getElementById(playersContainerId);
+  const label = document.getElementById(teamLabelId);
+  if (!container || !label) return;
+
+  const teamId = selectEl.value;
+  if (!teamId) {
+    label.textContent = roleLabel;
+    container.innerHTML = `<p class="text-muted">Chọn đội để xem danh sách ngôi sao...</p>`;
+    return;
+  }
+
+  const option = selectEl.options[selectEl.selectedIndex];
+  const teamName = option ? option.textContent : '';
+  label.textContent = `${roleLabel} (${teamName})`;
+
+  let matchedStars = null;
+  const teamShort = teamName.replace(/ (FC|Club|AC|UD|Real|RC)$/i, "").toLowerCase().trim();
+  const resolvedName = TEAM_ALIAS[teamShort] || teamShort;
+  
+  for (const [key, stars] of Object.entries(SQUAD_STARS)) {
+    const keyShort = key.replace(" FC", "").toLowerCase().trim();
+    if (resolvedName.includes(keyShort) || keyShort.includes(resolvedName)) {
+      matchedStars = stars;
+      break;
+    }
+  }
+
+  if (!matchedStars || matchedStars.length === 0) {
+    container.innerHTML = `<p class="text-muted">Không có danh sách siêu sao mặc định cho đội này.</p>`;
+    return;
+  }
+
+  container.innerHTML = matchedStars.map(player => `
+    <label class="player-checkbox-label">
+      <input type="checkbox" name="${playersContainerId}_player" value="${player}" />
+      <span>${player}</span>
+    </label>
+  `).join('');
+}
+
 // ── DOM Refs ───────────────────────────────────────────────────
 const leagueSelect   = document.getElementById('leagueSelect');
 const homeTeamSelect = document.getElementById('homeTeamSelect');
@@ -128,9 +258,9 @@ function showSkeletonResults() {
 
   // Skeleton + blinking AI cho AI card
   document.querySelector('.ai-card').innerHTML = `
-    <h2 class="card-title">🤖 Claude AI Phân Tích</h2>
+    <h2 class="card-title">🤖 Gemini AI Phân Tích</h2>
     <div class="ai-thinking">
-      <span>Claude đang phân tích trận đấu</span>
+      <span>Gemini đang phân tích trận đấu</span>
       <div class="ai-thinking-dot">
         <span></span><span></span><span></span>
       </div>
@@ -217,13 +347,23 @@ function restorePredictionCard() {
         <span class="ou-value" id="under25">--</span>
       </div>
     </div>
+    <div class="value-bets-box" id="valueBetsBox">
+      <h3 class="value-bets-title">🎯 Tỷ Số Vàng (+EV) cược nhà cái</h3>
+      <div class="value-bets-list" id="valueBetsList">
+        <p class="text-muted" style="font-size:0.8rem">Không có dữ liệu tỷ số cược nhà cái hoặc không có tỷ số +EV.</p>
+      </div>
+    </div>
   `;
 
   document.querySelector('.ai-card').innerHTML = `
-    <h2 class="card-title">🤖 Claude AI Phân Tích</h2>
+    <h2 class="card-title">🤖 Gemini AI Phân Tích</h2>
     <div class="risk-badge" id="riskBadge">--</div>
     <p class="ai-summary" id="aiSummary"></p>
     <div class="ai-recommendation" id="aiRecommendation"></div>
+    <div class="ai-lineup-analysis hidden" id="aiLineupAnalysisBox">
+      <h3 class="lineup-analysis-title">📋 Phân Tích Đội Hình & Chiến Thuật</h3>
+      <p class="lineup-analysis-text" id="aiLineupAnalysisText"></p>
+    </div>
   `;
 }
 
@@ -242,6 +382,49 @@ document.addEventListener('DOMContentLoaded', async () => {
   predictBtn.addEventListener('click', runPrediction);
   liveModeBtn.addEventListener('click', toggleLiveMode);
 
+  const oddsAccordion = document.getElementById('oddsAccordion');
+  const toggleOddsBtn = document.getElementById('toggleOddsBtn');
+  if (toggleOddsBtn && oddsAccordion) {
+    toggleOddsBtn.addEventListener('click', () => {
+      oddsAccordion.classList.toggle('open');
+    });
+  }
+
+  const injuriesAccordion = document.getElementById('injuriesAccordion');
+  const toggleInjuriesBtn = document.getElementById('toggleInjuriesBtn');
+  if (toggleInjuriesBtn && injuriesAccordion) {
+    toggleInjuriesBtn.addEventListener('click', () => {
+      injuriesAccordion.classList.toggle('open');
+    });
+  }
+
+  const lineupsAccordion = document.getElementById('lineupsAccordion');
+  const toggleLineupsBtn = document.getElementById('toggleLineupsBtn');
+  if (toggleLineupsBtn && lineupsAccordion) {
+    toggleLineupsBtn.addEventListener('click', () => {
+      lineupsAccordion.classList.toggle('open');
+    });
+  }
+
+  homeTeamSelect.addEventListener('change', () => {
+    updateSquadStars(homeTeamSelect, 'injuryHomePlayers', 'injuryHomeTeamLabel', 'Đội nhà');
+    const option = homeTeamSelect.options[homeTeamSelect.selectedIndex];
+    const teamName = option ? option.textContent : '';
+    const lineupLabel = document.getElementById('lineupHomeTeamLabel');
+    if (lineupLabel) {
+      lineupLabel.textContent = teamName ? `Đội hình Đội nhà (${teamName})` : 'Đội hình Đội nhà';
+    }
+  });
+  awayTeamSelect.addEventListener('change', () => {
+    updateSquadStars(awayTeamSelect, 'injuryAwayPlayers', 'injuryAwayTeamLabel', 'Đội khách');
+    const option = awayTeamSelect.options[awayTeamSelect.selectedIndex];
+    const teamName = option ? option.textContent : '';
+    const lineupLabel = document.getElementById('lineupAwayTeamLabel');
+    if (lineupLabel) {
+      lineupLabel.textContent = teamName ? `Đội hình Đội khách (${teamName})` : 'Đội hình Đội khách';
+    }
+  });
+
   document.getElementById('btnGoalHome').addEventListener('click', () => addLiveEvent('goal', 'home'));
   document.getElementById('btnGoalAway').addEventListener('click', () => addLiveEvent('goal', 'away'));
   document.getElementById('btnRedHome').addEventListener('click',  () => addLiveEvent('red_card', 'home'));
@@ -258,6 +441,8 @@ async function loadTeams(league = 'PL') {
     allTeams = data.teams || [];
     populateTeamDropdown(homeTeamSelect, allTeams, 'Chọn đội nhà');
     populateTeamDropdown(awayTeamSelect, allTeams, 'Chọn đội khách');
+    updateSquadStars(homeTeamSelect, 'injuryHomePlayers', 'injuryHomeTeamLabel', 'Đội nhà');
+    updateSquadStars(awayTeamSelect, 'injuryAwayPlayers', 'injuryAwayTeamLabel', 'Đội khách');
   } catch (err) {
     showToast('Không tải được danh sách đội', err.message, 'error');
   }
@@ -307,6 +492,56 @@ async function runPrediction() {
       fetchTeamForm(awayTeamId),
     ]);
 
+    const customOdds = {
+      homeOdd: document.getElementById('oddHome').value || null,
+      drawOdd: document.getElementById('oddDraw').value || null,
+      awayOdd: document.getElementById('oddAway').value || null,
+      over25Odd: document.getElementById('oddOver').value || null,
+      under25Odd: document.getElementById('oddUnder').value || null,
+    };
+
+    const handicapValue = document.getElementById('handicapValue').value;
+    const handicapHomeOdd = document.getElementById('handicapHomeOdd').value;
+    const handicapAwayOdd = document.getElementById('handicapAwayOdd').value;
+
+    let customHandicap = null;
+    if (handicapValue !== "" && handicapHomeOdd && handicapAwayOdd) {
+      customHandicap = {
+        handicap: parseFloat(handicapValue),
+        homeOdd: parseFloat(handicapHomeOdd),
+        awayOdd: parseFloat(handicapAwayOdd)
+      };
+    }
+
+    // Gather checked absences
+    const homeChecked = Array.from(document.querySelectorAll('input[name="injuryHomePlayers_player"]:checked')).map(el => el.value);
+    const awayChecked = Array.from(document.querySelectorAll('input[name="injuryAwayPlayers_player"]:checked')).map(el => el.value);
+    const customText = document.getElementById('customInjuriesInput').value.trim();
+
+    let injuriesString = '';
+    const homeInjStr = homeChecked.map(p => `${p} vắng mặt`).join(', ');
+    const awayInjStr = awayChecked.map(p => `${p} vắng mặt`).join(', ');
+
+    if (homeInjStr || awayInjStr || customText) {
+      const optionHome = homeTeamSelect.options[homeTeamSelect.selectedIndex];
+      const optionAway = awayTeamSelect.options[awayTeamSelect.selectedIndex];
+      const homeName = optionHome ? optionHome.textContent : 'Home';
+      const awayName = optionAway ? optionAway.textContent : 'Away';
+
+      // Always prefix both teams to ensure we have the '|' separator and prevent ambiguity in the backend
+      const parts = [
+        `${homeName}: ${homeInjStr}`,
+        `${awayName}: ${awayInjStr}`
+      ];
+      if (customText) {
+        parts.push(`Khác: ${customText}`);
+      }
+      injuriesString = parts.join(' | ');
+    }
+
+    const homeLineup = document.getElementById('homeLineupInput')?.value || '';
+    const awayLineup = document.getElementById('awayLineupInput')?.value || '';
+
     const res = await fetch(`${API}/api/predict/prematch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -319,6 +554,14 @@ async function runPrediction() {
         homeForm: homeFormResult.status === 'fulfilled' ? homeFormResult.value.join('') : '',
         awayForm: awayFormResult.status === 'fulfilled' ? awayFormResult.value.join('') : '',
         isNeutral: leagueSelect.value === 'WC' || leagueSelect.value === 'EC',
+        isKnockout: document.getElementById('isKnockout').checked,
+        weather: document.getElementById('weatherSelect').value || 'fine',
+        referee: document.getElementById('refereeSelect').value || 'normal',
+        injuries: injuriesString,
+        customOdds,
+        customHandicap,
+        homeLineup,
+        awayLineup,
       }),
     });
 
@@ -391,11 +634,35 @@ function displayPrediction(pred, homeForm, awayForm) {
   document.getElementById('over25').textContent  = `${Math.round((pred.overUnder?.over25  || 0) * 100)}%`;
   document.getElementById('under25').textContent = `${Math.round((pred.overUnder?.under25 || 0) * 100)}%`;
 
+  // Render Value Bets (+EV)
+  const valueBetsList = document.getElementById('valueBetsList');
+  if (valueBetsList) {
+    const valueBets = pred.valueBets || [];
+    if (valueBets.length > 0) {
+      valueBetsList.innerHTML = valueBets.map(bet => `
+        <div class="value-bet-item">
+          <div class="value-bet-score-info">
+            <span class="value-bet-score">${bet.score.home} - ${bet.score.away}</span>
+            <span class="value-bet-details">(Odds: ${bet.odds} | Xác suất: ${Math.round(bet.prob * 100)}%)</span>
+          </div>
+          <span class="value-bet-ev">+${Math.round(bet.ev * 100)}% EV</span>
+        </div>
+      `).join('');
+    } else {
+      valueBetsList.innerHTML = `<p class="text-muted" style="font-size:0.8rem">Không có tỷ số nào có giá trị kỳ vọng (+EV) dương tại thời điểm này.</p>`;
+    }
+  }
+
   const aiAnalysis = pred.aiAnalysis || {};
-  const risk = aiAnalysis.riskLevel || 'medium';
+  const riskRaw = aiAnalysis.riskLevel || 'medium';
+  // Map tiếng Việt → CSS class tiếng Anh để giữ styling nhất quán
+  const riskClassMap = { 'thấp': 'low', 'trung bình': 'medium', 'cao': 'high', 'low': 'low', 'medium': 'medium', 'high': 'high' };
+  const riskClass = riskClassMap[riskRaw.toLowerCase()] || 'medium';
+  const riskLabelMap = { 'low': 'Thấp', 'medium': 'Trung bình', 'high': 'Cao', 'thấp': 'Thấp', 'trung bình': 'Trung bình', 'cao': 'Cao' };
+  const riskLabel = riskLabelMap[riskRaw.toLowerCase()] || riskRaw;
   const riskEl = document.getElementById('riskBadge');
-  riskEl.textContent = `Rủi ro: ${risk.toUpperCase()}`;
-  riskEl.className = `risk-badge ${risk}`;
+  riskEl.textContent = `⚠️ Rủi ro: ${riskLabel}`;
+  riskEl.className = `risk-badge ${riskClass}`;
 
   document.getElementById('aiSummary').textContent = aiAnalysis.summary || 'Không có phân tích AI.';
   const recEl = document.getElementById('aiRecommendation');
@@ -404,6 +671,15 @@ function displayPrediction(pred, homeForm, awayForm) {
     recEl.style.display = 'block';
   } else {
     recEl.style.display = 'none';
+  }
+
+  const lineupAnalysisBox = document.getElementById('aiLineupAnalysisBox');
+  const lineupAnalysisText = document.getElementById('aiLineupAnalysisText');
+  if (pred.aiLineupAnalysis && lineupAnalysisBox && lineupAnalysisText) {
+    lineupAnalysisText.textContent = pred.aiLineupAnalysis;
+    lineupAnalysisBox.classList.remove('hidden');
+  } else if (lineupAnalysisBox) {
+    lineupAnalysisBox.classList.add('hidden');
   }
 
   if (pred.scoreMatrix) {

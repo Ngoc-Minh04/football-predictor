@@ -1,6 +1,8 @@
 import { getDatabase, queryAll, queryGet } from '../db/database.js';
 import { predict } from '../models/predictor.js';
 import { blendWithBookmaker } from '../scrapers/oddsApi.js';
+import { getDixonColesStrengths } from './dixonColesSolver.js';
+import { calibrateMatrixIPF, getMostLikelyScoreConsistent } from '../models/poisson.js';
 
 async function runBacktest() {
   console.log('\n╔══════════════════════════════════════════════════════╗');
@@ -72,13 +74,13 @@ async function runBacktest() {
         h2hAvgGoals = totalGoals / h2hMatches.length;
       }
 
-      // 8 trận gần nhất (mixed home+away) trước ngày trận đấu
+      // 12 trận gần nhất (mixed home+away) trước ngày trận đấu
       const homeRecentMatches = await queryAll(db,
         `SELECT * FROM matches
          WHERE (home_team_id = ? OR away_team_id = ?)
            AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
            AND date < ?
-         ORDER BY date DESC LIMIT 8`,
+         ORDER BY date DESC LIMIT 12`,
         [homeId, homeId, matchDate]
       );
 
@@ -87,7 +89,7 @@ async function runBacktest() {
          WHERE (home_team_id = ? OR away_team_id = ?)
            AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
            AND date < ?
-         ORDER BY date DESC LIMIT 8`,
+         ORDER BY date DESC LIMIT 12`,
         [awayId, awayId, matchDate]
       );
 
@@ -147,6 +149,14 @@ async function runBacktest() {
         [awayId, m.season]
       ) || { goals_scored: 15, goals_conceded: 20, matches_played: 14, xG: 0, xGA: 0 };
 
+      // Calculate Dixon-Coles strengths dynamically
+      let dixonColesStrengths = null;
+      try {
+        dixonColesStrengths = await getDixonColesStrengths(m.league, m.season, matchDate);
+      } catch (dcErr) {
+        console.warn(`[backtest] Failed to calculate Dixon-Coles strengths for ${matchDate}: ${dcErr.message}`);
+      }
+
       // Chạy predict engine
       const pred = predict({
         homeStats,
@@ -169,12 +179,18 @@ async function runBacktest() {
         homeWinRate,
         matchDate,
         isNeutral: false,        // Upgrade 2: EPL không phải sân trung lập
+        dixonColesStrengths,
       });
 
       // Blend with Bookmaker Odds if available
-      const blend = await blendWithBookmaker(pred.result, pred.overUnder, m.id, db);
+      const blend = await blendWithBookmaker(pred.result, pred.overUnder, m.id, db, pred.confidence, true);
       pred.result = blend.result;
       pred.overUnder = blend.overUnder;
+
+      // Calibrate score matrix using Iterative Proportional Fitting (IPF)
+      const calibratedMatrix = calibrateMatrixIPF(pred.scoreMatrix, pred.result, pred.overUnder);
+      pred.scoreMatrix = calibratedMatrix;
+      pred.score = getMostLikelyScoreConsistent(calibratedMatrix, pred.result);
 
 
       // Kết quả thực

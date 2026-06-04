@@ -1,5 +1,6 @@
 import express from 'express';
 import { getDatabase, queryAll, queryGet } from '../db/database.js';
+import { toViName } from '../utils/teamTranslator.js';
 
 const router = express.Router();
 
@@ -21,7 +22,14 @@ router.get('/', async (req, res) => {
     sql += ' ORDER BY name ASC';
 
     const teams = await queryAll(db, sql, params);
-    res.json({ teams });
+    
+    // Dịch tên đội bóng sang tiếng Việt trước khi trả về
+    const translatedTeams = teams.map(t => ({
+      ...t,
+      name: toViName(t.name)
+    }));
+
+    res.json({ teams: translatedTeams });
   } catch (err) {
     console.error('[API/teams] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -42,6 +50,7 @@ router.get('/:id/stats', async (req, res) => {
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
+    team.name = toViName(team.name);
 
     const stats = await queryGet(db,
       'SELECT * FROM team_stats WHERE team_id = ? ORDER BY season DESC LIMIT 1',
@@ -74,6 +83,12 @@ router.get('/:id/stats', async (req, res) => {
       return 'L';
     });
 
+    const translatedMatches = recentMatches.map(m => ({
+      ...m,
+      home_team_name: toViName(m.home_team_name),
+      away_team_name: toViName(m.away_team_name)
+    }));
+
     // ELO history
     const eloHistory = await queryAll(db,
       'SELECT * FROM elo_history WHERE team_id = ? ORDER BY date DESC LIMIT 10',
@@ -84,7 +99,7 @@ router.get('/:id/stats', async (req, res) => {
       team,
       stats: stats || {},
       form,
-      recentMatches,
+      recentMatches: translatedMatches,
       eloHistory,
     });
   } catch (err) {

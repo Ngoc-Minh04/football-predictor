@@ -82,7 +82,7 @@ export function calcLambda(attackStrength, defenceStrength, leagueAverage = 1.0)
  * Build 7x7 score probability matrix using Poisson distribution (independent)
  * matrix[i][j] = P(home = i goals, away = j goals)
  */
-export function buildScoreMatrix(homeLambda, awayLambda, maxGoals = 6) {
+export function buildScoreMatrix(homeLambda, awayLambda, maxGoals = 7) {
   const size = maxGoals + 1;
   const matrix = Array.from({ length: size }, () => new Array(size).fill(0));
 
@@ -112,7 +112,7 @@ export function buildScoreMatrix(homeLambda, awayLambda, maxGoals = 6) {
  * @param {number} lambda3    - covariance parameter (default 0.10)
  * @param {number} maxGoals   - max goals per team in matrix (default 6)
  */
-export function buildBivariateScoreMatrix(homeLambda, awayLambda, lambda3 = 0.10, maxGoals = 6) {
+export function buildBivariateScoreMatrix(homeLambda, awayLambda, lambda3 = 0.10, maxGoals = 7) {
   // Decompose: λ1 = homeLambda - λ3, λ2 = awayLambda - λ3
   // Clamp to avoid negatives (minimum 0.01)
   const lambda1 = Math.max(0.01, homeLambda - lambda3);
@@ -249,6 +249,198 @@ export function getMostLikelyScoreConsistent(matrix, probs) {
   }
 
   return bestScore;
+}
+
+/**
+ * Build 7x7 score probability matrix using Negative Binomial distribution (independent)
+ */
+export function buildNegativeBinomialScoreMatrix(homeLambda, awayLambda, r = NB_DISPERSION, maxGoals = 7) {
+  const size = maxGoals + 1;
+  const matrix = Array.from({ length: size }, () => new Array(size).fill(0));
+
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      matrix[i][j] = negativeBinomialPMF(i, homeLambda, r) * negativeBinomialPMF(j, awayLambda, r);
+    }
+  }
+  return matrix;
+}
+
+/**
+ * Blend two probability score matrices
+ */
+export function blendScoreMatrices(matrixA, matrixB, weightA = 0.6) {
+  const size = matrixA.length;
+  const blended = Array.from({ length: size }, () => new Array(size).fill(0));
+  const weightB = 1 - weightA;
+
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      blended[i][j] = weightA * matrixA[i][j] + weightB * matrixB[i][j];
+    }
+  }
+  return blended;
+}
+
+/**
+ * Helper to calculate Asian Handicap weights for a score cell (homeGoals, awayGoals)
+ * given a handicap H (home handicap, e.g. -0.5, +0.25)
+ * Returns { homeWeight, awayWeight } where homeWeight + awayWeight = 1
+ */
+function getHandicapWeights(homeGoals, awayGoals, handicap) {
+  const d = homeGoals - awayGoals;
+  
+  const getSingleWeights = (H) => {
+    const diff = d + H;
+    if (diff > 0) return { home: 1.0, away: 0.0 };
+    if (diff < 0) return { home: 0.0, away: 1.0 };
+    return { home: 0.5, away: 0.5 }; // Push/Refund
+  };
+
+  // If handicap is a multiple of 0.5
+  if (Math.abs(handicap * 2) % 1 === 0) {
+    const w = getSingleWeights(handicap);
+    return { homeWeight: w.home, awayWeight: w.away };
+  } else {
+    // Quarter handicap (e.g. -0.25, -0.75, +0.25, +0.75)
+    const h1 = handicap - 0.25;
+    const h2 = handicap + 0.25;
+    const w1 = getSingleWeights(h1);
+    const w2 = getSingleWeights(h2);
+    return {
+      homeWeight: (w1.home + w2.home) / 2,
+      awayWeight: (w1.away + w2.away) / 2
+    };
+  }
+}
+
+/**
+ * Calibrate score matrix using Iterative Proportional Fitting (IPF)
+ * to align with 1X2, Over/Under, and Asian Handicap targets (3D IPF).
+ */
+export function calibrateMatrixIPF(matrix, target1X2, targetOU, targetHandicap = null, iterations = 100) {
+  let scoreMatrix = JSON.parse(JSON.stringify(matrix));
+  const size = scoreMatrix.length;
+  const tolerance = 1e-5;
+
+  const targetUnder = targetOU.under25 !== undefined ? targetOU.under25 : (targetOU.under || 0);
+  const targetOver = targetOU.over25 !== undefined ? targetOU.over25 : (targetOU.over || 0);
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Constraint 1: 1X2 partitions
+    let currentHome = 0, currentDraw = 0, currentAway = 0;
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (i > j) currentHome += scoreMatrix[i][j];
+        else if (i === j) currentDraw += scoreMatrix[i][j];
+        else currentAway += scoreMatrix[i][j];
+      }
+    }
+
+    // Constraint 2: Over/Under 2.5
+    let currentUnder = 0, currentOver = 0;
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (i + j <= 2.5) currentUnder += scoreMatrix[i][j];
+        else currentOver += scoreMatrix[i][j];
+      }
+    }
+
+    // Constraint 3: Asian Handicap
+    let currentUpper = 0, currentLower = 0;
+    let handicapWeights = null;
+    if (targetHandicap && targetHandicap.handicap !== undefined) {
+      handicapWeights = Array.from({ length: size }, () => new Array(size));
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          const w = getHandicapWeights(i, j, targetHandicap.handicap);
+          handicapWeights[i][j] = w;
+          currentUpper += scoreMatrix[i][j] * w.homeWeight;
+          currentLower += scoreMatrix[i][j] * w.awayWeight;
+        }
+      }
+    }
+
+    const diffHome = Math.abs(currentHome - target1X2.home);
+    const diffDraw = Math.abs(currentDraw - target1X2.draw);
+    const diffAway = Math.abs(currentAway - target1X2.away);
+    const diffUnder = Math.abs(currentUnder - targetUnder);
+    const diffOver = Math.abs(currentOver - targetOver);
+    
+    let diffHandicap = 0;
+    if (targetHandicap && targetHandicap.handicap !== undefined) {
+      diffHandicap = Math.abs(currentUpper - targetHandicap.upperProb) + Math.abs(currentLower - targetHandicap.lowerProb);
+    }
+
+    const totalError = diffHome + diffDraw + diffAway + diffUnder + diffOver + diffHandicap;
+
+    // Nếu sai số nhỏ hơn ngưỡng hội tụ, dừng lặp sớm
+    if (totalError < tolerance) {
+      break;
+    }
+
+    // 1. Hiệu chỉnh 1X2
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (i > j && currentHome > 0) scoreMatrix[i][j] *= (target1X2.home / currentHome);
+        else if (i === j && currentDraw > 0) scoreMatrix[i][j] *= (target1X2.draw / currentDraw);
+        else if (i < j && currentAway > 0) scoreMatrix[i][j] *= (target1X2.away / currentAway);
+      }
+    }
+
+    // 2. Hiệu chỉnh Over/Under 2.5
+    // Phải tính lại sau khi đổi ma trận ở bước 1X2
+    let after1X2Under = 0, after1X2Over = 0;
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (i + j <= 2.5) after1X2Under += scoreMatrix[i][j];
+        else after1X2Over += scoreMatrix[i][j];
+      }
+    }
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (i + j <= 2.5 && after1X2Under > 0) scoreMatrix[i][j] *= (targetUnder / after1X2Under);
+        else if (i + j > 2.5 && after1X2Over > 0) scoreMatrix[i][j] *= (targetOver / after1X2Over);
+      }
+    }
+
+    // 3. Hiệu chỉnh Asian Handicap
+    if (targetHandicap && targetHandicap.handicap !== undefined) {
+      // Tính lại sau khi đổi ở bước Over/Under
+      let afterOUUpper = 0, afterOULower = 0;
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          const w = handicapWeights[i][j];
+          afterOUUpper += scoreMatrix[i][j] * w.homeWeight;
+          afterOULower += scoreMatrix[i][j] * w.awayWeight;
+        }
+      }
+
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          const w = handicapWeights[i][j];
+          let factor = 0;
+          if (afterOUUpper > 0) factor += w.homeWeight * (targetHandicap.upperProb / afterOUUpper);
+          if (afterOULower > 0) factor += w.awayWeight * (targetHandicap.lowerProb / afterOULower);
+          scoreMatrix[i][j] *= factor;
+        }
+      }
+    }
+
+    // Re-normalize
+    let totalSum = 0;
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) totalSum += scoreMatrix[i][j];
+    }
+    if (totalSum > 0) {
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) scoreMatrix[i][j] /= totalSum;
+      }
+    }
+  }
+
+  return scoreMatrix;
 }
 
 /**

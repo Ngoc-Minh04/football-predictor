@@ -107,8 +107,28 @@ export function initDatabase() {
             away_prob REAL,
             over25_prob REAL,
             under25_prob REAL,
+            handicap_value REAL,
+            handicap_home_prob REAL,
+            handicap_away_prob REAL,
+            correct_score_odds TEXT,
             fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (match_id) REFERENCES matches (id)
+          )
+        `, () => {
+          // Thêm cột nếu bảng đã tồn tại từ trước và thiếu các cột này
+          db.run(`ALTER TABLE odds_cache ADD COLUMN handicap_value REAL`, () => {});
+          db.run(`ALTER TABLE odds_cache ADD COLUMN handicap_home_prob REAL`, () => {});
+          db.run(`ALTER TABLE odds_cache ADD COLUMN handicap_away_prob REAL`, () => {});
+          db.run(`ALTER TABLE odds_cache ADD COLUMN correct_score_odds TEXT`, () => {});
+        });
+
+        // 7. Bảng analysis_cache — lưu kết quả phân tích AI (Gemini) theo cặp đội + ngày
+        //    TTL 24h được kiểm tra trong claudeAnalyzer.js (không tốn request lặp)
+        db.run(`
+          CREATE TABLE IF NOT EXISTS analysis_cache (
+            cache_key TEXT PRIMARY KEY,
+            result    TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         `, (err) => {
           if (err) {

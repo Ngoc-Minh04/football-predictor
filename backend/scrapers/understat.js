@@ -137,6 +137,34 @@ export async function saveXGToDb(db, teamsData, season = 2024) {
         );
         console.log(`[Understat] Inserted xG for ${team.name} (from ${teamTitle}): xG=${xG.toFixed(2)}, xGA=${xGA.toFixed(2)}`);
       }
+
+      // Save match-by-match xG into matches table
+      if (teamInfo.history && Array.isArray(teamInfo.history)) {
+        let matchUpdates = 0;
+        for (const hm of teamInfo.history) {
+          if (!hm.date) continue;
+          const matchDatePart = hm.date.split(' ')[0];
+          
+          if (hm.h_a === 'h') {
+            const result = await queryRun(db,
+              `UPDATE matches 
+               SET xg_home = ?, xg_away = ? 
+               WHERE home_team_id = ? AND date = ? AND season = ?`,
+              [parseFloat(hm.xG), parseFloat(hm.xGA), team.id, matchDatePart, season]
+            );
+            if (result.changes > 0) matchUpdates++;
+          } else {
+            const result = await queryRun(db,
+              `UPDATE matches 
+               SET xg_home = ?, xg_away = ? 
+               WHERE away_team_id = ? AND date = ? AND season = ?`,
+              [parseFloat(hm.xGA), parseFloat(hm.xG), team.id, matchDatePart, season]
+            );
+            if (result.changes > 0) matchUpdates++;
+          }
+        }
+        console.log(`[Understat] Updated match-by-match xG for ${team.name}: ${matchUpdates} matches.`);
+      }
     } else {
       console.warn(`[Understat] Could not find team in DB for understat team: ${teamTitle}`);
     }

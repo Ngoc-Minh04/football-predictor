@@ -940,3 +940,334 @@ body {
 .toast-info   { border-color: rgba(59,130,246,0.4); }
 .toast-info   .toast-icon { color: var(--accent); }
 
+/* ── Odds Accordion ─────────────────────────────────────────── */
+.odds-accordion {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  margin-top: 16px;
+  transition: border-color var(--transition);
+}
+.odds-accordion:hover {
+  border-color: rgba(255,255,255,0.15);
+}
+
+.odds-accordion-toggle {
+  width: 100%;
+  padding: 14px 18px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background var(--transition);
+}
+.odds-accordion-toggle:hover {
+  background: rgba(255,255,255,0.02);
+}
+
+.accordion-arrow {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: transform 0.3s ease;
+}
+
+.odds-accordion-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out, padding 0.3s ease;
+  padding: 0 18px;
+  background: rgba(0,0,0,0.1);
+}
+
+.odds-accordion.open .odds-accordion-content {
+  max-height: 800px;
+  padding: 16px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.odds-accordion.open .accordion-arrow {
+  transform: rotate(180deg);
+}
+
+/* Odds Accordion Sections Layout */
+.odds-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.odds-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.odds-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 6px;
+}
+
+.odds-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.odds-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 550px) {
+  .odds-grid-3, .odds-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* Injuries Accordion Layout */
+.injuries-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 600px) {
+  .injuries-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+.injuries-team-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.injuries-team-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  padding-bottom: 6px;
+}
+
+.key-players-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.key-players-list .text-muted {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Custom scrollbar for key-players-list */
+.key-players-list::-webkit-scrollbar {
+  width: 4px;
+}
+.key-players-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.player-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.03);
+  transition: all var(--transition);
+  user-select: none;
+}
+
+.player-checkbox-label:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.player-checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Value Bets (+EV) Box ──────────────────────────────────── */
+.value-bets-box {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.value-bets-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+  color: #f59e0b; /* màu vàng gold/amber */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.value-bets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.value-bet-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.04);
+  border: 1px solid rgba(245, 158, 11, 0.12);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+
+.value-bet-item:hover {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  transform: translateY(-1px);
+}
+
+.value-bet-score-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.value-bet-score {
+  font-weight: 800;
+  font-size: 1.1rem;
+  color: var(--text);
+  font-family: monospace;
+}
+
+.value-bet-details {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.value-bet-ev {
+  font-weight: 800;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+/* ── Squad Lineups (📋 Đội Hình) & AI Lineup Analysis Styles ── */
+.lineups-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .lineups-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lineup-team-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lineup-field-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.textarea-field {
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 10px 12px;
+  line-height: 1.5;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: all var(--transition);
+}
+
+.textarea-field:focus {
+  border-color: var(--accent);
+  background: rgba(255,255,255,0.06);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+
+.ai-lineup-analysis {
+  margin-top: 20px;
+  padding: 14px 16px;
+  background: rgba(99, 102, 241, 0.04);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: var(--radius);
+  transition: all var(--transition);
+  text-align: left;
+}
+
+.ai-lineup-analysis:hover {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+.lineup-analysis-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent2); /* Indigo */
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.lineup-analysis-text {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+

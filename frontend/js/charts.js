@@ -160,14 +160,40 @@ function renderFactors(factors) {
     neutral: '➡️',
   };
 
+  const labelMap = {
+    positive: 'Tích cực',
+    negative: 'Tiêu cực',
+    neutral: 'Trung lập',
+  };
+
   container.innerHTML = factors.map((f, idx) => {
-    const impact = f.impact || 'neutral';
-    const icon = f.icon || iconMap[impact] || '📌';
+    let rawImpact = f.impact;
+    let impactNormalized = 'neutral';
+
+    // Xử lý các dạng của impact (số, chuỗi tiếng Anh, chuỗi tiếng Việt)
+    if (typeof rawImpact === 'number') {
+      if (rawImpact > 0) impactNormalized = 'positive';
+      else if (rawImpact < 0) impactNormalized = 'negative';
+      else impactNormalized = 'neutral';
+    } else if (typeof rawImpact === 'string') {
+      const impLower = rawImpact.toLowerCase();
+      if (impLower === 'positive' || impLower === 'tích cực' || impLower === 'tich cuc') {
+        impactNormalized = 'positive';
+      } else if (impLower === 'negative' || impLower === 'tiêu cực' || impLower === 'tieu cuc') {
+        impactNormalized = 'negative';
+      } else {
+        impactNormalized = 'neutral';
+      }
+    }
+
+    const icon = f.icon || iconMap[impactNormalized] || '📌';
+    const dispLabel = labelMap[impactNormalized];
+
     return `
       <div class="factor-item" style="animation-delay:${idx * 60}ms">
         <span class="factor-icon">${icon}</span>
         <span class="factor-text">${f.factor || f.name || 'Unknown factor'}</span>
-        <span class="factor-impact impact-${impact}">${impact}</span>
+        <span class="factor-impact impact-${impactNormalized}">${dispLabel}</span>
       </div>
     `;
   }).join('');
