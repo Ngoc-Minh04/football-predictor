@@ -78,7 +78,7 @@ async function runBacktest() {
          WHERE (home_team_id = ? OR away_team_id = ?)
            AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
            AND date < ?
-         ORDER BY date DESC LIMIT 6`,
+         ORDER BY date DESC LIMIT 8`,
         [homeId, homeId, matchDate]
       );
 
@@ -88,7 +88,7 @@ async function runBacktest() {
          WHERE (home_team_id = ? OR away_team_id = ?)
            AND status = 'FINISHED' AND score_home IS NOT NULL AND score_away IS NOT NULL
            AND date < ?
-         ORDER BY date DESC LIMIT 6`,
+         ORDER BY date DESC LIMIT 8`,
         [awayId, awayId, matchDate]
       );
 
