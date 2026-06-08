@@ -116,10 +116,19 @@ async function autoTune() {
       [awayId, m.season]
     ) || { goals_scored: 15, goals_conceded: 20, matches_played: 14, xG: 0, xGA: 0 };
 
-    let dixonColesStrengths = null;
-    try {
-      dixonColesStrengths = await getDixonColesStrengths(m.league, m.season, matchDate);
-    } catch (_) {}
+    const xGBlendWeights = [0.0, 0.25, 0.50, 0.75, 1.0];
+    const decayVals = [0.003, 0.0045, 0.006];
+    const dixonColesStrengthsMap = {};
+    for (const dec of decayVals) {
+      for (const w of xGBlendWeights) {
+        const key = `${dec.toFixed(4)}_${w.toFixed(2)}`;
+        try {
+          dixonColesStrengthsMap[key] = await getDixonColesStrengths(m.league, m.season, matchDate, w, dec);
+        } catch (_) {
+          dixonColesStrengthsMap[key] = null;
+        }
+      }
+    }
 
     matchDataList.push({
       m,
@@ -136,57 +145,65 @@ async function autoTune() {
       homeRestDays,
       awayRestDays,
       homeWinRate,
-      dixonColesStrengths,
+      dixonColesStrengthsMap,
     });
   }
 
-  originalLog('[Auto-Tune] Pre-fetch complete. Stage 1: Tuning eloLambdaDivisor, nbR and lambda3...');
+  originalLog('[Auto-Tune] Pre-fetch complete. Stage 1: Tuning eloLambdaDivisor, nbR, lambda3 and xGBlendWeight...');
   console.log = () => {};
 
   const nbRVals = [1.5, 2.0, 4.0, 8.0, 12.0];
   const eloDivisorVals = [0, 1800, 2400, 3000, 4000]; // 0 = disabled
   const lambda3Vals = [0.02, 0.05, 0.10, 0.15];
+  const xGBlendWeights = [0.0, 0.25, 0.50, 0.75, 1.0];
 
   let bestScoreStage1 = -1;
   let bestNbR = 2.0;
   let bestEloDivisor = 3000;
   let bestLambda3 = 0.02;
+  let bestXGBlendWeight = 0.50;
 
   for (const r of nbRVals) {
     for (const div of eloDivisorVals) {
       for (const l3 of lambda3Vals) {
-        let correctScore = 0;
-        for (const data of matchDataList) {
-          const pred = predict({
-            ...data,
-            homeTeamId: data.m.home_team_id,
-            awayTeamId: data.m.away_team_id,
-            homeElo: data.m.home_elo || 1500,
-            awayElo: data.m.away_elo || 1500,
-            matchDate: data.m.date,
-            isNeutral: data.m.league === 'WC' || data.m.league === 'EC',
-            nbR: r,
-            eloLambdaDivisor: div,
-            lambda3: l3,
-          });
+        for (const w of xGBlendWeights) {
+          let correctScore = 0;
+          for (const data of matchDataList) {
+            const key = `0.0045_${w.toFixed(2)}`;
+            const strengths = data.dixonColesStrengthsMap[key];
+            const pred = predict({
+              ...data,
+              homeTeamId: data.m.home_team_id,
+              awayTeamId: data.m.away_team_id,
+              homeElo: data.m.home_elo || 1500,
+              awayElo: data.m.away_elo || 1500,
+              matchDate: data.m.date,
+              isNeutral: data.m.league === 'WC' || data.m.league === 'EC',
+              nbR: r,
+              eloLambdaDivisor: div,
+              lambda3: l3,
+              dixonColesStrengths: strengths,
+            });
 
-          const blend = await blendWithBookmaker(pred.result, pred.overUnder, data.m.id, db, pred.confidence, true);
-          pred.result = blend.result;
-          pred.overUnder = blend.overUnder;
+            const blend = await blendWithBookmaker(pred.result, pred.overUnder, data.m.id, db, pred.confidence, true);
+            pred.result = blend.result;
+            pred.overUnder = blend.overUnder;
 
-          const calibrated = calibrateMatrixIPF(pred.scoreMatrix, pred.result, pred.overUnder);
-          const score = getMostLikelyScoreConsistent(calibrated, pred.result);
+            const calibrated = calibrateMatrixIPF(pred.scoreMatrix, pred.result, pred.overUnder);
+            const score = getMostLikelyScoreConsistent(calibrated, pred.result);
 
-          if (data.m.score_home === score.home && data.m.score_away === score.away) {
-            correctScore++;
+            if (data.m.score_home === score.home && data.m.score_away === score.away) {
+              correctScore++;
+            }
           }
-        }
 
-        if (correctScore > bestScoreStage1) {
-          bestScoreStage1 = correctScore;
-          bestNbR = r;
-          bestEloDivisor = div;
-          bestLambda3 = l3;
+          if (correctScore > bestScoreStage1) {
+            bestScoreStage1 = correctScore;
+            bestNbR = r;
+            bestEloDivisor = div;
+            bestLambda3 = l3;
+            bestXGBlendWeight = w;
+          }
         }
       }
     }
@@ -215,6 +232,8 @@ async function autoTune() {
         for (const dbm of drawBoostMaxs) {
           let correctScore = 0;
           for (const data of matchDataList) {
+            const key = `${dec.toFixed(4)}_${bestXGBlendWeight.toFixed(2)}`;
+            const strengths = data.dixonColesStrengthsMap[key];
             const pred = predict({
               ...data,
               homeTeamId: data.m.home_team_id,
@@ -228,6 +247,7 @@ async function autoTune() {
               nbR: bestNbR,
               eloLambdaDivisor: bestEloDivisor,
               lambda3: bestLambda3,
+              dixonColesStrengths: strengths,
 
               // Sweeping Stage 2
               bivariateWeight: bw,
@@ -261,7 +281,7 @@ async function autoTune() {
   }
 
   console.log = originalLog;
-  originalLog(`[Auto-Tune] Stage 2 finished. Best bivariateWeight: ${bestBw}, eloWeight: ${bestEloW}, decay: ${bestDecay}, drawBoostMax: ${bestDbm} (Correct Score: ${bestScoreStage2}/${matches.length})`);
+  originalLog(`[Auto-Tune] Stage 2 finished. Best bivariateWeight: ${bestBw}, eloWeight: ${bestEloW}, decay: ${bestDecay}, drawBoostMax: ${bestDbm}, xGBlendWeight: ${bestXGBlendWeight} (Correct Score: ${bestScoreStage2}/${matches.length})`);
 
   // Save optimal parameters to optimal_params.json
   const paramsPath = path.resolve(process.cwd(), 'config/optimal_params.json');
@@ -286,7 +306,8 @@ async function autoTune() {
     bivariateWeight: bestBw,
     eloWeight: bestEloW,
     decay: bestDecay,
-    drawBoostMax: bestDbm
+    drawBoostMax: bestDbm,
+    xGBlendWeight: bestXGBlendWeight
   };
 
   fs.writeFileSync(paramsPath, JSON.stringify(config, null, 2), 'utf8');

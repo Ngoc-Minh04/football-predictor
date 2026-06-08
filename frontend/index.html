@@ -7,7 +7,7 @@
   <meta name="description" content="Dự đoán kết quả bóng đá thông minh kết hợp mô hình Poisson, Dixon-Coles, ELO và phân tích từ Claude AI" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=1.3" />
+  <link rel="stylesheet" href="css/style.css?v=1.7" />
 </head>
 <body>
   <!-- ═══ HEADER ═══════════════════════════════════════════════════════════ -->
@@ -75,8 +75,29 @@
         <div class="field-group">
           <label for="refereeSelect">Trọng tài</label>
           <select id="refereeSelect" class="select-field">
-            <option value="normal">⚖️ Bình thường</option>
-            <option value="strict">🟨 Nghiêm khắc (nhiều thẻ/pen)</option>
+            <option value="normal">⚖️ Bình thường (Tiêu chuẩn)</option>
+            <option value="strict">🟨 Nghiêm khắc (Nhiều thẻ / Penalty)</option>
+            <option value="lenient">🟢 Khoan dung (Ít còi / Trôi chảy)</option>
+            <option value="home_biased">🚩 Áp lực chủ nhà (Ủng hộ đội nhà)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="venueConditionSelect">Địa hình & Khí hậu</label>
+          <select id="venueConditionSelect" class="select-field">
+            <option value="normal">🏟️ Tiêu chuẩn / Sân thường</option>
+            <option value="high_altitude">⛰️ Độ cao lớn (Mexico City >2000m)</option>
+            <option value="hot_humid">🌡️ Nóng ẩm cực đoan (Miami/Houston/Dallas)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="groupScenarioSelect">Động lực vòng bảng</label>
+          <select id="groupScenarioSelect" class="select-field">
+            <option value="normal">⚖️ Tiêu chuẩn / Bình thường</option>
+            <option value="home_qualified_rotation">🔄 Đội nhà xoay tua (Đã đi tiếp)</option>
+            <option value="away_qualified_rotation">🔄 Đội khách xoay tua (Đã đi tiếp)</option>
+            <option value="home_must_win_big">🏹 Đội nhà buộc thắng đậm (Tấn công)</option>
+            <option value="away_must_win_big">🏹 Đội khách buộc thắng đậm (Tấn công)</option>
+            <option value="collusive_draw">🤝 Thỏa hiệp hòa (Cùng đi tiếp)</option>
           </select>
         </div>
       </div>
@@ -158,6 +179,84 @@
             <div class="lineup-team-block">
               <label for="awayLineupInput" id="lineupAwayTeamLabel" class="lineup-field-label">Đội hình Đội khách</label>
               <textarea id="awayLineupInput" class="select-field textarea-field" rows="3" placeholder="Dán danh sách cầu thủ chính thức của Đội khách (ví dụ: Japan: Suzuki, Sugawara, Itakura, Machida, Ito, Endo, Morita, Doan, Minamino, Mitoma, Ueda)"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Travel & Jet Lag Accordion -->
+      <div class="odds-accordion" id="travelAccordion">
+        <button type="button" class="odds-accordion-toggle" id="toggleTravelBtn">
+          <span>✈️ Di Chuyển & Thể Lực World Cup 2026 (Tùy chọn)</span>
+          <span class="accordion-arrow">▼</span>
+        </button>
+        <div class="odds-accordion-content" id="travelContent">
+          <div class="travel-grid">
+            <div class="travel-team-block">
+              <label for="currentCitySelect" class="travel-field-label">Thành phố diễn ra trận đấu</label>
+              <select id="currentCitySelect" class="select-field">
+                <option value="">-- Không chọn / Mặc định --</option>
+                <option value="vancouver">Vancouver (Canada)</option>
+                <option value="toronto">Toronto (Canada)</option>
+                <option value="seattle">Seattle (USA)</option>
+                <option value="san_francisco">San Francisco (USA)</option>
+                <option value="los_angeles">Los Angeles (USA)</option>
+                <option value="guadalajara">Guadalajara (Mexico)</option>
+                <option value="mexico_city">Mexico City (Mexico)</option>
+                <option value="monterrey">Monterrey (Mexico)</option>
+                <option value="houston">Houston (USA)</option>
+                <option value="dallas">Dallas (USA)</option>
+                <option value="kansas_city">Kansas City (USA)</option>
+                <option value="atlanta">Atlanta (USA)</option>
+                <option value="miami">Miami (USA)</option>
+                <option value="boston">Boston (USA)</option>
+                <option value="philadelphia">Philadelphia (USA)</option>
+                <option value="new_york">New York/New Jersey (USA)</option>
+              </select>
+            </div>
+            <div class="travel-team-block">
+              <label for="homeLastCitySelect" id="travelHomeLabel" class="travel-field-label">Nơi Đội nhà đá trận trước</label>
+              <select id="homeLastCitySelect" class="select-field">
+                <option value="">-- Không di chuyển (Tại chỗ) --</option>
+                <option value="vancouver">Vancouver (Canada)</option>
+                <option value="toronto">Toronto (Canada)</option>
+                <option value="seattle">Seattle (USA)</option>
+                <option value="san_francisco">San Francisco (USA)</option>
+                <option value="los_angeles">Los Angeles (USA)</option>
+                <option value="guadalajara">Guadalajara (Mexico)</option>
+                <option value="mexico_city">Mexico City (Mexico)</option>
+                <option value="monterrey">Monterrey (Mexico)</option>
+                <option value="houston">Houston (USA)</option>
+                <option value="dallas">Dallas (USA)</option>
+                <option value="kansas_city">Kansas City (USA)</option>
+                <option value="atlanta">Atlanta (USA)</option>
+                <option value="miami">Miami (USA)</option>
+                <option value="boston">Boston (USA)</option>
+                <option value="philadelphia">Philadelphia (USA)</option>
+                <option value="new_york">New York/New Jersey (USA)</option>
+              </select>
+            </div>
+            <div class="travel-team-block">
+              <label for="awayLastCitySelect" id="travelAwayLabel" class="travel-field-label">Nơi Đội khách đá trận trước</label>
+              <select id="awayLastCitySelect" class="select-field">
+                <option value="">-- Không di chuyển (Tại chỗ) --</option>
+                <option value="vancouver">Vancouver (Canada)</option>
+                <option value="toronto">Toronto (Canada)</option>
+                <option value="seattle">Seattle (USA)</option>
+                <option value="san_francisco">San Francisco (USA)</option>
+                <option value="los_angeles">Los Angeles (USA)</option>
+                <option value="guadalajara">Guadalajara (Mexico)</option>
+                <option value="mexico_city">Mexico City (Mexico)</option>
+                <option value="monterrey">Monterrey (Mexico)</option>
+                <option value="houston">Houston (USA)</option>
+                <option value="dallas">Dallas (USA)</option>
+                <option value="kansas_city">Kansas City (USA)</option>
+                <option value="atlanta">Atlanta (USA)</option>
+                <option value="miami">Miami (USA)</option>
+                <option value="boston">Boston (USA)</option>
+                <option value="philadelphia">Philadelphia (USA)</option>
+                <option value="new_york">New York/New Jersey (USA)</option>
+              </select>
             </div>
           </div>
         </div>
@@ -417,6 +516,6 @@
 
   <script src="js/charts.js"></script>
   <script src="js/websocket.js"></script>
-  <script src="js/app.js?v=1.4"></script>
+  <script src="js/app.js?v=1.7"></script>
 </body>
 </html>

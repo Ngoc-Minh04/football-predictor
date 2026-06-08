@@ -1,6 +1,25 @@
 import { getDatabase, queryAll } from '../db/database.js';
+import fs from 'fs';
+import path from 'path';
 
-const DECAY_RATE = 0.0035; // standard time-decay phi (Dixon & Coles 1997)
+let optimalXGBlendWeight = 0.5; // default fallback if not configured
+let optimalDecay = 0.0045; // default fallback if not configured
+
+try {
+  const configPath = path.resolve(process.cwd(), 'config/optimal_params.json');
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed.xGBlendWeight !== undefined) {
+      optimalXGBlendWeight = Number(parsed.xGBlendWeight);
+    }
+    if (parsed.decay !== undefined) {
+      optimalDecay = Number(parsed.decay);
+    }
+  }
+} catch (e) {
+  // silent fallback
+}
 
 /**
  * Solve ELO-weighted Dixon-Coles parameters for all teams in a league/season simultaneously
@@ -9,8 +28,11 @@ const DECAY_RATE = 0.0035; // standard time-decay phi (Dixon & Coles 1997)
  * @param {string} targetDateStr - date of the target match to calculate days difference
  * @param {number} iterations - EM iterations (default 30 is enough to converge)
  * @param {object} eloMap - map of teamId to ELO rating
+ * @param {number} xGBlendWeight - blend weight between actual goals and expected goals (0.0 = goals only, 1.0 = xG only)
+ * @param {number} decayRate - decay rate for time decay (default 0.0045)
+ * @param {string} targetLeague - league of the target match for tiering decay
  */
-export function solveDixonColesMLE(matches, teamIds, targetDateStr, iterations = 30, eloMap = {}) {
+export function solveDixonColesMLE(matches, teamIds, targetDateStr, iterations = 30, eloMap = {}, xGBlendWeight = 0.5, decayRate = 0.0045, targetLeague = null) {
   if (matches.length === 0 || teamIds.length === 0) {
     // Return flat fallbacks if no data
     const fallback = {};
@@ -27,7 +49,22 @@ export function solveDixonColesMLE(matches, teamIds, targetDateStr, iterations =
     const matchDate = new Date(m.date);
     const diffMs = targetDate - matchDate;
     const diffDays = Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24)));
-    const weight = Math.exp(-DECAY_RATE * diffDays);
+
+    // Dynamic Decay based on match tier / target league
+    let tierFactor = 1.0;
+    if (targetLeague === 'WC' || targetLeague === 'EC') {
+      if (m.league === 'Friendly' || m.league === 'Giao hữu' || m.league === 'Friendly Match' || !m.league) {
+        tierFactor = 3.5; // decays 3.5x faster
+      } else if (m.league === 'WC' || m.league === 'EC' || m.league === 'World Cup' || m.league === 'Euro') {
+        tierFactor = 0.5; // decays slower (very relevant matches)
+      }
+    } else {
+      if (m.league === targetLeague) {
+        tierFactor = 0.5;
+      }
+    }
+
+    const weight = Math.exp(-decayRate * tierFactor * diffDays);
 
     const homeId = Number(m.home_team_id);
     const awayId = Number(m.away_team_id);
@@ -46,11 +83,25 @@ export function solveDixonColesMLE(matches, teamIds, targetDateStr, iterations =
     const awayScoredMult = Math.max(0.5, Math.min(1.5, 1 + awayScoredDelta / 1200));
     const awayConcededMult = Math.max(0.5, Math.min(1.5, 1 - awayScoredDelta / 1200));
 
+    // Blend actual goals with Expected Goals (xG) if xG data exists
+    const actualHomeGoals = Number(m.score_home);
+    const actualAwayGoals = Number(m.score_away);
+
+    const xgHome = (m.xg_home !== null && m.xg_home !== undefined) ? Number(m.xg_home) : null;
+    const xgAway = (m.xg_away !== null && m.xg_away !== undefined) ? Number(m.xg_away) : null;
+
+    const gs = xgHome !== null 
+      ? ((1 - xGBlendWeight) * actualHomeGoals + xGBlendWeight * xgHome) 
+      : actualHomeGoals;
+    const ga = xgAway !== null 
+      ? ((1 - xGBlendWeight) * actualAwayGoals + xGBlendWeight * xgAway) 
+      : actualAwayGoals;
+
     return {
       homeId,
       awayId,
-      gs: Number(m.score_home),
-      ga: Number(m.score_away),
+      gs,
+      ga,
       weight,
       homeScoredMult,
       homeConcededMult,
@@ -151,12 +202,12 @@ export function solveDixonColesMLE(matches, teamIds, targetDateStr, iterations =
 /**
  * Load matches and solve ELO-weighted Dixon-Coles parameters dynamically
  */
-export async function getDixonColesStrengths(league, season, targetDateStr) {
+export async function getDixonColesStrengths(league, season, targetDateStr, customXGBlendWeight = null, customDecay = null) {
   const db = await getDatabase();
   
-  // Load finished matches of the season before the target date
+  // Load finished matches of the season before the target date, including xg_home/xg_away and league
   const matches = await queryAll(db,
-    `SELECT home_team_id, away_team_id, score_home, score_away, date 
+    `SELECT home_team_id, away_team_id, score_home, score_away, xg_home, xg_away, league, date 
      FROM matches 
      WHERE league = ? AND season = ? AND status = 'FINISHED' 
        AND score_home IS NOT NULL AND score_away IS NOT NULL AND date < ?`,
@@ -186,5 +237,7 @@ export async function getDixonColesStrengths(league, season, targetDateStr) {
     });
   }
   
-  return solveDixonColesMLE(matches, teamIds, targetDateStr, 30, eloMap);
+  const xGBlendWeight = customXGBlendWeight !== null ? customXGBlendWeight : optimalXGBlendWeight;
+  const decayRate = customDecay !== null ? customDecay : optimalDecay;
+  return solveDixonColesMLE(matches, teamIds, targetDateStr, 30, eloMap, xGBlendWeight, decayRate, league);
 }

@@ -392,6 +392,9 @@ export function predict(params) {
     targetLeague = null,
     homeTeamName = null,
     awayTeamName = null,
+    venueCondition = 'normal',
+    travelData = null,
+    groupScenario = 'normal',
   } = params;
 
   const homeIdNum = homeTeamId !== undefined && homeTeamId !== null ? Number(homeTeamId) : null;
@@ -404,10 +407,10 @@ export function predict(params) {
   let adjAwayElo = awayElo;
   const confFactors = [];
   
+  const homeConf = homeTeamName ? getConfederation(homeTeamName) : 'OTHER';
+  const awayConf = awayTeamName ? getConfederation(awayTeamName) : 'OTHER';
+
   if (targetLeague === 'WC' && homeTeamName && awayTeamName) {
-    const homeConf = getConfederation(homeTeamName);
-    const awayConf = getConfederation(awayTeamName);
-    
     const CONF_ELO_BOOST = {
       'UEFA': 75,
       'CONMEBOL': 75,
@@ -432,6 +435,153 @@ export function predict(params) {
         impact: Math.round((eloDiffBoost / 1000) * 100) / 100,
         icon: '⚖️'
       });
+    }
+  }
+
+  // ─── Climate & Altitude ELO & xG Adjustment ──────────────────────────────
+  let venueGoalsPenalty = 1.0;
+  let homeTravelGoalsPenalty = 1.0;
+  let awayTravelGoalsPenalty = 1.0;
+  if (venueCondition === 'high_altitude') {
+    venueGoalsPenalty = 0.92;
+    if (homeConf !== 'CONMEBOL') {
+      adjHomeElo -= 60;
+      confFactors.push({
+        factor: `Độ cao lớn (Mexico City >2000m): ${homeTeamName || 'Đội nhà'} không quen độ cao (-60 ELO ảo)`,
+        impact: -0.06,
+        icon: '⛰️'
+      });
+    }
+    if (awayConf !== 'CONMEBOL') {
+      adjAwayElo -= 60;
+      confFactors.push({
+        factor: `Độ cao lớn (Mexico City >2000m): ${awayTeamName || 'Đội khách'} không quen độ cao (-60 ELO ảo)`,
+        impact: -0.06,
+        icon: '⛰️'
+      });
+    }
+    confFactors.push({
+      factor: `Ảnh hưởng độ cao lớn: Giảm 8% bàn thắng kỳ vọng cả hai đội`,
+      impact: -0.08,
+      icon: '⛰️'
+    });
+  } else if (venueCondition === 'hot_humid') {
+    venueGoalsPenalty = 0.94;
+    if (homeConf === 'UEFA') {
+      adjHomeElo -= 40;
+      confFactors.push({
+        factor: `Nắng nóng ẩm cực đoan (Miami/Houston/Dallas): ${homeTeamName || 'Đội nhà'} (UEFA) chịu phạt nhiệt độ (-40 ELO ảo)`,
+        impact: -0.04,
+        icon: '🌡️'
+      });
+    }
+    if (awayConf === 'UEFA') {
+      adjAwayElo -= 40;
+      confFactors.push({
+        factor: `Nắng nóng ẩm cực đoan (Miami/Houston/Dallas): ${awayTeamName || 'Đội khách'} (UEFA) chịu phạt nhiệt độ (-40 ELO ảo)`,
+        impact: -0.04,
+        icon: '🌡️'
+      });
+    }
+    confFactors.push({
+      factor: `Ảnh hưởng thời tiết nóng ẩm: Giảm 6% bàn thắng kỳ vọng cả hai đội`,
+      impact: -0.06,
+      icon: '🌡️'
+    });
+  }
+
+  // ─── Travel & Jet Lag ELO & xG Adjustment ────────────────────────────────
+  if (travelData && travelData.currentCity) {
+    const WC26_CITIES = {
+      vancouver: { name: 'Vancouver (Canada)', lat: 49.2827, lon: -123.1207, utcOffset: -7 },
+      toronto: { name: 'Toronto (Canada)', lat: 43.6532, lon: -79.3832, utcOffset: -4 },
+      seattle: { name: 'Seattle (USA)', lat: 47.6062, lon: -122.3321, utcOffset: -7 },
+      san_francisco: { name: 'San Francisco (USA)', lat: 37.3541, lon: -121.9552, utcOffset: -7 },
+      los_angeles: { name: 'Los Angeles (USA)', lat: 34.0522, lon: -118.2437, utcOffset: -7 },
+      guadalajara: { name: 'Guadalajara (Mexico)', lat: 20.6597, lon: -103.3496, utcOffset: -6 },
+      mexico_city: { name: 'Mexico City (Mexico)', lat: 19.4326, lon: -99.1332, utcOffset: -6 },
+      monterrey: { name: 'Monterrey (Mexico)', lat: 25.6866, lon: -100.3161, utcOffset: -6 },
+      houston: { name: 'Houston (USA)', lat: 29.7604, lon: -95.3698, utcOffset: -5 },
+      dallas: { name: 'Dallas (USA)', lat: 32.7767, lon: -96.7970, utcOffset: -5 },
+      kansas_city: { name: 'Kansas City (USA)', lat: 39.0997, lon: -94.5786, utcOffset: -5 },
+      atlanta: { name: 'Atlanta (USA)', lat: 33.7490, lon: -84.3880, utcOffset: -4 },
+      miami: { name: 'Miami (USA)', lat: 25.7617, lon: -80.1918, utcOffset: -4 },
+      boston: { name: 'Boston (USA)', lat: 42.3601, lon: -71.0589, utcOffset: -4 },
+      philadelphia: { name: 'Philadelphia (USA)', lat: 39.9526, lon: -75.1652, utcOffset: -4 },
+      new_york: { name: 'New York/New Jersey (USA)', lat: 40.7128, lon: -74.0060, utcOffset: -4 }
+    };
+
+    function calcHaversine(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Earth's radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    const currentLoc = WC26_CITIES[travelData.currentCity];
+
+    if (currentLoc) {
+      // 1. Home Team Travel
+      if (travelData.homeLastCity && travelData.homeLastCity !== travelData.currentCity) {
+        const lastLoc = WC26_CITIES[travelData.homeLastCity];
+        if (lastLoc) {
+          const dist = calcHaversine(lastLoc.lat, lastLoc.lon, currentLoc.lat, currentLoc.lon);
+          const tzDiff = Math.abs(lastLoc.utcOffset - currentLoc.utcOffset);
+          
+          let homeEloPenalty = Math.round((dist / 1000) * 10) + (tzDiff * 10);
+          homeEloPenalty = Math.min(homeEloPenalty, 70); // cap at 70 ELO
+          adjHomeElo -= homeEloPenalty;
+
+          let homeXgPenalty = 0;
+          if (dist > 3500) homeXgPenalty += 0.06;
+          else if (dist > 1500) homeXgPenalty += 0.03;
+
+          if (tzDiff >= 3) homeXgPenalty += 0.04;
+          else if (tzDiff >= 2) homeXgPenalty += 0.02;
+
+          homeXgPenalty = Math.min(homeXgPenalty, 0.08); // cap at 8%
+          homeTravelGoalsPenalty = 1 - homeXgPenalty;
+
+          confFactors.push({
+            factor: `Di chuyển đội nhà (${lastLoc.name.split(' ')[0]} ➔ ${currentLoc.name.split(' ')[0]}): Bay ${Math.round(dist)}km, lệch ${tzDiff} múi giờ (phạt -${homeEloPenalty} ELO ảo & -${Math.round(homeXgPenalty * 100)}% xG)`,
+            impact: -Math.round(homeXgPenalty * 100) / 100,
+            icon: '✈️'
+          });
+        }
+      }
+
+      // 2. Away Team Travel
+      if (travelData.awayLastCity && travelData.awayLastCity !== travelData.currentCity) {
+        const lastLoc = WC26_CITIES[travelData.awayLastCity];
+        if (lastLoc) {
+          const dist = calcHaversine(lastLoc.lat, lastLoc.lon, currentLoc.lat, currentLoc.lon);
+          const tzDiff = Math.abs(lastLoc.utcOffset - currentLoc.utcOffset);
+
+          let awayEloPenalty = Math.round((dist / 1000) * 10) + (tzDiff * 10);
+          awayEloPenalty = Math.min(awayEloPenalty, 70); // cap at 70 ELO
+          adjAwayElo -= awayEloPenalty;
+
+          let awayXgPenalty = 0;
+          if (dist > 3500) awayXgPenalty += 0.06;
+          else if (dist > 1500) awayXgPenalty += 0.03;
+
+          if (tzDiff >= 3) awayXgPenalty += 0.04;
+          else if (tzDiff >= 2) awayXgPenalty += 0.02;
+
+          awayXgPenalty = Math.min(awayXgPenalty, 0.08); // cap at 8%
+          awayTravelGoalsPenalty = 1 - awayXgPenalty;
+
+          confFactors.push({
+            factor: `Di chuyển đội khách (${lastLoc.name.split(' ')[0]} ➔ ${currentLoc.name.split(' ')[0]}): Bay ${Math.round(dist)}km, lệch ${tzDiff} múi giờ (phạt -${awayEloPenalty} ELO ảo & -${Math.round(awayXgPenalty * 100)}% xG)`,
+            impact: -Math.round(awayXgPenalty * 100) / 100,
+            icon: '✈️'
+          });
+        }
+      }
     }
   }
 
@@ -634,7 +784,65 @@ export function predict(params) {
   let { homeLambda: adjHomeLambda, awayLambda: adjAwayLambda, factors } =
     applySituationalFactors({ homeLambda, awayLambda }, situationalFactors, injuryFactor);
 
-  // Gộp các yếu tố hiệu chỉnh Liên đoàn
+  if (venueGoalsPenalty !== 1.0) {
+    adjHomeLambda *= venueGoalsPenalty;
+    adjAwayLambda *= venueGoalsPenalty;
+  }
+
+  // Apply Travel xG penalties
+  if (typeof homeTravelGoalsPenalty !== 'undefined' && homeTravelGoalsPenalty !== 1.0) {
+    adjHomeLambda *= homeTravelGoalsPenalty;
+  }
+  if (typeof awayTravelGoalsPenalty !== 'undefined' && awayTravelGoalsPenalty !== 1.0) {
+    adjAwayLambda *= awayTravelGoalsPenalty;
+  }
+
+  // ─── Step 7.5: Apply Group Stage Game Theory Scenario Modulator ───────────
+  if (groupScenario && groupScenario !== 'normal') {
+    if (groupScenario === 'home_qualified_rotation') {
+      adjHomeLambda *= 0.75;
+      adjAwayLambda *= 1.10;
+      factors.push({
+        factor: 'Động lực vòng bảng: Đội nhà đã chắc suất đi tiếp, xoay tua đội hình (-25% công Đội nhà, +10% cơ hội cho Đội khách)',
+        impact: -0.25,
+        icon: '🔄'
+      });
+    } else if (groupScenario === 'away_qualified_rotation') {
+      adjAwayLambda *= 0.75;
+      adjHomeLambda *= 1.10;
+      factors.push({
+        factor: 'Động lực vòng bảng: Đội khách đã chắc suất đi tiếp, xoay tua đội hình (-25% công Đội khách, +10% cơ hội cho Đội nhà)',
+        impact: -0.25,
+        icon: '🔄'
+      });
+    } else if (groupScenario === 'home_must_win_big') {
+      adjHomeLambda *= 1.20;
+      adjAwayLambda *= 1.30;
+      factors.push({
+        factor: 'Động lực vòng bảng: Đội nhà buộc phải thắng đậm, dâng cao tấn công tổng lực (+20% công Đội nhà, hàng thủ lỏng lẻo dâng cao khiến đối thủ nhận +30% xG)',
+        impact: 0.20,
+        icon: '🏹'
+      });
+    } else if (groupScenario === 'away_must_win_big') {
+      adjAwayLambda *= 1.20;
+      adjHomeLambda *= 1.30;
+      factors.push({
+        factor: 'Động lực vòng bảng: Đội khách buộc phải thắng đậm, tấn công tổng lực (+20% công Đội khách, hàng thủ lỏng lẻo dâng cao khiến đối thủ nhận +30% xG)',
+        impact: 0.20,
+        icon: '🏹'
+      });
+    } else if (groupScenario === 'collusive_draw') {
+      adjHomeLambda *= 0.85;
+      adjAwayLambda *= 0.85;
+      factors.push({
+        factor: 'Động lực vòng bảng: Cả hai đội chỉ cần hòa để dắt tay nhau đi tiếp (Giảm -15% bàn thắng kỳ vọng cả hai bên, tăng mạnh xác suất hòa 0-0/1-1)',
+        impact: -0.15,
+        icon: '🤝'
+      });
+    }
+  }
+
+  // Gộp các yếu tố hiệu chỉnh Liên đoàn & Khí hậu/Địa hình
   if (confFactors.length > 0) {
     factors = factors || [];
     factors.push(...confFactors);
@@ -691,9 +899,30 @@ export function predict(params) {
   }
 
   if (referee === 'strict') {
-    adjHomeLambda *= 1.05;
-    adjAwayLambda *= 1.05;
-    factors.push({ factor: 'Trọng tài nghiêm khắc (tăng cơ hội penalty/thẻ phạt) (+5%)', impact: 0.05, icon: '🟨' });
+    adjHomeLambda *= 1.06;
+    adjAwayLambda *= 1.06;
+    factors.push({ factor: 'Trọng tài nghiêm khắc (Strict): Tăng cơ hội penalty và thẻ phạt (+6% bàn thắng kỳ vọng)', impact: 0.06, icon: '🟨' });
+  } else if (referee === 'lenient') {
+    adjHomeLambda *= 0.93;
+    adjAwayLambda *= 0.93;
+    factors.push({ factor: 'Trọng tài khoan dung (Lenient): Lối chơi thể lực tự do, ít thổi còi (-7% bàn thắng kỳ vọng)', impact: -0.07, icon: '⚖️' });
+  } else if (referee === 'home_biased') {
+    if (isNeutral) {
+      const isHomeHost = ['Mexico', 'United States', 'Canada', 'Mỹ'].some(h => homeTeamName && homeTeamName.includes(h));
+      if (isHomeHost) {
+        adjHomeLambda *= 1.06;
+        adjAwayLambda *= 0.94;
+        factors.push({ factor: 'Trọng tài thiên vị chủ nhà (Home Bias): Ưu ái nước chủ nhà đăng cai (+6% công, -6% thủ khách)', impact: 0.06, icon: '🚩' });
+      } else {
+        adjHomeLambda *= 1.03;
+        adjAwayLambda *= 0.97;
+        factors.push({ factor: 'Trọng tài thiên vị chủ nhà (Home Bias): Trận trung lập, ưu ái nhẹ đội chỉ định sân nhà (+3%/-3%)', impact: 0.03, icon: '🚩' });
+      }
+    } else {
+      adjHomeLambda *= 1.05;
+      adjAwayLambda *= 0.95;
+      factors.push({ factor: 'Trọng tài thiên vị chủ nhà (Home Bias): Chịu áp lực khán giả sân nhà (+5% công, -5% thủ khách)', impact: 0.05, icon: '🚩' });
+    }
   }
 
   // Log form momentum if non-neutral
@@ -730,9 +959,12 @@ export function predict(params) {
   if (isKnockout) {
     effectiveLambda3 += 0.10; // Tăng thêm 0.10 cho trận Knockout giằng co
   }
+  if (groupScenario === 'collusive_draw') {
+    effectiveLambda3 += 0.20; // Tăng thêm 0.20 cho trận hòa thỏa hiệp
+  }
 
-  // Giới hạn lambda3 trong khoảng thực tế [0.01, 0.35]
-  effectiveLambda3 = Math.max(0.01, Math.min(0.35, effectiveLambda3));
+  // Giới hạn lambda3 trong khoảng thực tế [0.01, 0.45]
+  effectiveLambda3 = Math.max(0.01, Math.min(0.45, effectiveLambda3));
   console.log(`[Predictor] ELO-based Dynamic lambda3 = ${effectiveLambda3.toFixed(4)} (ELO diff = ${eloDiffAbs}, base=${lambda3})`);
 
   // Blend Bivariate Poisson (capturing dependency) and Negative Binomial (capturing overdispersion)
@@ -775,6 +1007,32 @@ export function predict(params) {
     for (let i = 0; i < scoreMatrix.length; i++) {
       for (let j = 0; j < scoreMatrix[i].length; j++) scoreMatrix[i][j] /= matrixSum;
     }
+  }
+
+  // ─── Step 9.5: Zero-Inflated Poisson (ZIP) for 0-0 ────────────────────────
+  if (targetLeague === 'WC' || targetLeague === 'EC' || isKnockout || groupScenario === 'collusive_draw') {
+    const eloDiffAdj = Math.abs(adjHomeElo - adjAwayElo);
+    let pi = (isKnockout ? 0.08 : 0.03) * Math.exp(-eloDiffAdj / 400);
+    if (groupScenario === 'collusive_draw') {
+      pi += 0.12;
+    }
+    
+    // Apply zero-inflation to matrix
+    for (let i = 0; i < scoreMatrix.length; i++) {
+      for (let j = 0; j < scoreMatrix[i].length; j++) {
+        if (i === 0 && j === 0) {
+          scoreMatrix[i][j] = pi + (1 - pi) * scoreMatrix[i][j];
+        } else {
+          scoreMatrix[i][j] = (1 - pi) * scoreMatrix[i][j];
+        }
+      }
+    }
+    factors.push({
+      factor: `Lạm phát tỷ số 0-0 (ZIP model): Điều chỉnh tăng +${(pi * 100).toFixed(1)}% xác suất hòa không bàn thắng`,
+      impact: Math.round(pi * 100) / 100,
+      icon: '🛡️'
+    });
+    console.log(`[Predictor] ZIP applied: pi = ${pi.toFixed(4)}, new P(0,0) = ${scoreMatrix[0][0].toFixed(4)}`);
   }
 
   // ─── Step 10: Extract result probabilities ─────────────────────────────────

@@ -151,44 +151,69 @@ export async function fetchAndStoreOdds(league = 'PL') {
       const correctScoreMap = {};
 
       if (match.bookmakers && Array.isArray(match.bookmakers)) {
-        for (const bookmaker of match.bookmakers) {
-          const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+        const bookmakers = match.bookmakers;
+
+        // Helper to get target bookmakers for a market key (Pinnacle preference)
+        const getTargetBookmakers = (marketKey) => {
+          const pinnacle = bookmakers.find(b => b.key === 'pinnacle' && b.markets && b.markets.some(m => m.key === marketKey));
+          if (pinnacle) {
+            return [pinnacle];
+          }
+          return bookmakers;
+        };
+
+        // 1. Process H2H
+        const h2hBookmakers = getTargetBookmakers('h2h');
+        for (const bookmaker of h2hBookmakers) {
+          const h2hMarket = bookmaker.markets && bookmaker.markets.find(m => m.key === 'h2h');
           if (h2hMarket) {
-            const homeOutcome = h2hMarket.outcomes.find(o => o.name === match.home_team);
-            const awayOutcome = h2hMarket.outcomes.find(o => o.name === match.away_team);
-            const drawOutcome = h2hMarket.outcomes.find(o => o.name === 'Draw');
+            const homeOutcome = h2hMarket.outcomes && h2hMarket.outcomes.find(o => o.name === match.home_team);
+            const awayOutcome = h2hMarket.outcomes && h2hMarket.outcomes.find(o => o.name === match.away_team);
+            const drawOutcome = h2hMarket.outcomes && h2hMarket.outcomes.find(o => o.name === 'Draw');
             if (homeOutcome && awayOutcome && drawOutcome) {
               const oddHome = parseFloat(homeOutcome.price);
               const oddAway = parseFloat(awayOutcome.price);
               const oddDraw = parseFloat(drawOutcome.price);
-              const pHome = 1 / oddHome;
-              const pAway = 1 / oddAway;
-              const pDraw = 1 / oddDraw;
-              const overround = pHome + pDraw + pAway;
-              sumHomeProb += pHome / overround;
-              sumDrawProb += pDraw / overround;
-              sumAwayProb += pAway / overround;
-              totalH2HCount++;
+              if (!isNaN(oddHome) && !isNaN(oddAway) && !isNaN(oddDraw)) {
+                const pHome = 1 / oddHome;
+                const pAway = 1 / oddAway;
+                const pDraw = 1 / oddDraw;
+                const overround = pHome + pDraw + pAway;
+                sumHomeProb += pHome / overround;
+                sumDrawProb += pDraw / overround;
+                sumAwayProb += pAway / overround;
+                totalH2HCount++;
+              }
             }
           }
+        }
 
-          const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
+        // 2. Process Totals
+        const totalsBookmakers = getTargetBookmakers('totals');
+        for (const bookmaker of totalsBookmakers) {
+          const totalsMarket = bookmaker.markets && bookmaker.markets.find(m => m.key === 'totals');
           if (totalsMarket) {
-            const overOutcome = totalsMarket.outcomes.find(o => o.name === 'Over' && o.point === 2.5);
-            const underOutcome = totalsMarket.outcomes.find(o => o.name === 'Under' && o.point === 2.5);
+            const overOutcome = totalsMarket.outcomes && totalsMarket.outcomes.find(o => o.name === 'Over' && o.point === 2.5);
+            const underOutcome = totalsMarket.outcomes && totalsMarket.outcomes.find(o => o.name === 'Under' && o.point === 2.5);
             if (overOutcome && underOutcome) {
               const oddOver = parseFloat(overOutcome.price);
               const oddUnder = parseFloat(underOutcome.price);
-              const pOver = 1 / oddOver;
-              const pUnder = 1 / oddUnder;
-              const overround = pOver + pUnder;
-              sumOverProb += pOver / overround;
-              sumUnderProb += pUnder / overround;
-              totalTotalsCount++;
+              if (!isNaN(oddOver) && !isNaN(oddUnder)) {
+                const pOver = 1 / oddOver;
+                const pUnder = 1 / oddUnder;
+                const overround = pOver + pUnder;
+                sumOverProb += pOver / overround;
+                sumUnderProb += pUnder / overround;
+                totalTotalsCount++;
+              }
             }
           }
+        }
 
-          const spreadsMarket = bookmaker.markets.find(m => m.key === 'spreads');
+        // 3. Process Spreads
+        const spreadsBookmakers = getTargetBookmakers('spreads');
+        for (const bookmaker of spreadsBookmakers) {
+          const spreadsMarket = bookmaker.markets && bookmaker.markets.find(m => m.key === 'spreads');
           if (spreadsMarket && Array.isArray(spreadsMarket.outcomes)) {
             const homeOutcome = spreadsMarket.outcomes.find(o => o.name === match.home_team);
             const awayOutcome = spreadsMarket.outcomes.find(o => o.name === match.away_team);
@@ -208,8 +233,12 @@ export async function fetchAndStoreOdds(league = 'PL') {
               }
             }
           }
+        }
 
-          const csMarket = bookmaker.markets.find(m => m.key === 'correct_score');
+        // 4. Process Correct Score
+        const csBookmakers = getTargetBookmakers('correct_score');
+        for (const bookmaker of csBookmakers) {
+          const csMarket = bookmaker.markets && bookmaker.markets.find(m => m.key === 'correct_score');
           if (csMarket && Array.isArray(csMarket.outcomes)) {
             for (const outcome of csMarket.outcomes) {
               const scoreKey = parseCorrectScoreName(outcome.name, match.home_team, match.away_team);

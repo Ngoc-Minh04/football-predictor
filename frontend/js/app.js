@@ -406,6 +406,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  const travelAccordion = document.getElementById('travelAccordion');
+  const toggleTravelBtn = document.getElementById('toggleTravelBtn');
+  if (toggleTravelBtn && travelAccordion) {
+    toggleTravelBtn.addEventListener('click', () => {
+      travelAccordion.classList.toggle('open');
+    });
+  }
+
   homeTeamSelect.addEventListener('change', () => {
     updateSquadStars(homeTeamSelect, 'injuryHomePlayers', 'injuryHomeTeamLabel', 'Đội nhà');
     const option = homeTeamSelect.options[homeTeamSelect.selectedIndex];
@@ -413,6 +421,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const lineupLabel = document.getElementById('lineupHomeTeamLabel');
     if (lineupLabel) {
       lineupLabel.textContent = teamName ? `Đội hình Đội nhà (${teamName})` : 'Đội hình Đội nhà';
+    }
+    const travelHomeLabel = document.getElementById('travelHomeLabel');
+    if (travelHomeLabel) {
+      travelHomeLabel.textContent = teamName ? `Nơi ${teamName} đá trận trước` : 'Nơi Đội nhà đá trận trước';
     }
   });
   awayTeamSelect.addEventListener('change', () => {
@@ -422,6 +434,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const lineupLabel = document.getElementById('lineupAwayTeamLabel');
     if (lineupLabel) {
       lineupLabel.textContent = teamName ? `Đội hình Đội khách (${teamName})` : 'Đội hình Đội khách';
+    }
+    const travelAwayLabel = document.getElementById('travelAwayLabel');
+    if (travelAwayLabel) {
+      travelAwayLabel.textContent = teamName ? `Nơi ${teamName} đá trận trước` : 'Nơi Đội khách đá trận trước';
     }
   });
 
@@ -542,6 +558,12 @@ async function runPrediction() {
     const homeLineup = document.getElementById('homeLineupInput')?.value || '';
     const awayLineup = document.getElementById('awayLineupInput')?.value || '';
 
+    const travelData = {
+      currentCity: document.getElementById('currentCitySelect')?.value || null,
+      homeLastCity: document.getElementById('homeLastCitySelect')?.value || null,
+      awayLastCity: document.getElementById('awayLastCitySelect')?.value || null,
+    };
+
     const res = await fetch(`${API}/api/predict/prematch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -562,6 +584,9 @@ async function runPrediction() {
         customHandicap,
         homeLineup,
         awayLineup,
+        venueCondition: document.getElementById('venueConditionSelect')?.value || 'normal',
+        travelData,
+        groupScenario: document.getElementById('groupScenarioSelect')?.value || 'normal',
       }),
     });
 

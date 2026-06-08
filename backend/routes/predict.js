@@ -104,6 +104,9 @@ router.post('/prematch', validateMatch, async (req, res) => {
       customHandicap = null,
       homeLineup = '',
       awayLineup = '',
+      venueCondition = 'normal',
+      travelData = null,
+      groupScenario = 'normal',
     } = req.body;
 
     if (!homeTeamId || !awayTeamId) {
@@ -385,6 +388,9 @@ router.post('/prematch', validateMatch, async (req, res) => {
       targetLeague: league,    // Hướng C: Dynamic Decay
       homeTeamName: homeTeam.name,
       awayTeamName: awayTeam.name,
+      venueCondition,
+      travelData,
+      groupScenario,
     });
 
     // Upgrade 4: Flexible odds blending based on model confidence

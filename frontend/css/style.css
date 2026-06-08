@@ -1270,4 +1270,32 @@ body {
   color: var(--text-dim);
 }
 
+/* ── Travel & Jet Lag (✈️ Di Chuyển & Thể Lực) Styles ── */
+.travel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 15px;
+}
+
+@media (max-width: 768px) {
+  .travel-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.travel-team-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.travel-field-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
 
