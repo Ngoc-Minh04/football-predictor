@@ -6,6 +6,7 @@
 
 import { footballDataGet, apiDelay } from '../utils/apiClient.js';
 import { queryRun, queryGet, queryAll } from '../db/database.js';
+import { processMatchEloUpdate } from '../models/elo.js';
 
 const DELAY_MS = 1000;
 
@@ -64,6 +65,16 @@ export async function fetchAndSaveMatches(db, leagueCode = 'PL', season = 2024) 
       const status = match.status || 'SCHEDULED';
 
       const existing = await queryGet(db, 'SELECT id FROM matches WHERE id = ?', [match.id]);
+      let matchObj = {
+        id: match.id,
+        home_team_id: homeId,
+        away_team_id: awayId,
+        score_home: scoreHome,
+        score_away: scoreAway,
+        date,
+        league: leagueCode
+      };
+
       if (existing) {
         await queryRun(db,
           `UPDATE matches SET score_home = ?, score_away = ?, status = ? WHERE id = ?`,
@@ -76,8 +87,19 @@ export async function fetchAndSaveMatches(db, leagueCode = 'PL', season = 2024) 
           [match.id, homeId, awayId, date, scoreHome, scoreAway, leagueCode, season, status]
         );
       }
+
+      // Automatically trigger live ELO calculation if the match is finished
+      if (status === 'FINISHED' && scoreHome !== null && scoreAway !== null) {
+        try {
+          await processMatchEloUpdate(db, matchObj);
+        } catch (eloErr) {
+          console.error(`[FootballData] ELO update failed for match ${match.id}:`, eloErr.message);
+        }
+      }
+
       saved++;
     }
+
 
     console.log(`[FootballData] Saved ${saved} matches for ${leagueCode} ${season}`);
     await rebuildTeamStats(db, leagueCode, season);

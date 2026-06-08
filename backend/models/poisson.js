@@ -267,6 +267,98 @@ export function buildNegativeBinomialScoreMatrix(homeLambda, awayLambda, r = NB_
 }
 
 /**
+ * Frank Copula CDF: C(u, v; theta)
+ * Models joint dependency between margins.
+ */
+export function frankCopulaCDF(u, v, theta) {
+  // Clamp boundaries to prevent numerical errors
+  u = Math.max(0, Math.min(1, u));
+  v = Math.max(0, Math.min(1, v));
+
+  if (Math.abs(theta) < 1e-4) {
+    return u * v; // Independent case limit
+  }
+
+  const num = (Math.exp(-theta * u) - 1) * (Math.exp(-theta * v) - 1);
+  const den = Math.exp(-theta) - 1;
+  return - (1 / theta) * Math.log(1 + num / den);
+}
+
+/**
+ * Build score matrix using Bivariate Frank Copula with Negative Binomial margins
+ */
+export function buildFrankCopulaScoreMatrix(homeLambda, awayLambda, theta = -1.5, r = NB_DISPERSION, maxGoals = 7) {
+  const size = maxGoals + 1;
+  const matrix = Array.from({ length: size }, () => new Array(size).fill(0));
+
+  // 1. Precompute marginal CDFs
+  const cdfHome = new Array(size).fill(0);
+  const cdfAway = new Array(size).fill(0);
+
+  let runningHome = 0;
+  let runningAway = 0;
+  for (let i = 0; i < size; i++) {
+    runningHome += negativeBinomialPMF(i, homeLambda, r);
+    runningAway += negativeBinomialPMF(j => j, awayLambda, r); // dummy replacement inside loop:
+  }
+
+  // Proper implementation of CDF arrays:
+  let sumH = 0;
+  for (let i = 0; i < size; i++) {
+    sumH += negativeBinomialPMF(i, homeLambda, r);
+    cdfHome[i] = sumH;
+  }
+  // Ensure the tail sums to 1.0 at limit
+  cdfHome[size - 1] = 1.0;
+
+  let sumA = 0;
+  for (let j = 0; j < size; j++) {
+    sumA += negativeBinomialPMF(j, awayLambda, r);
+    cdfAway[j] = sumA;
+  }
+  cdfAway[size - 1] = 1.0;
+
+  // Helper helper to get CDF(x-1) safely
+  const getCDF = (cdfArray, index) => {
+    if (index < 0) return 0;
+    return cdfArray[index];
+  };
+
+  // 2. Compute PMF via difference equation:
+  // P(X=x, Y=y) = C(F(x), F(y)) - C(F(x-1), F(y)) - C(F(x), F(y-1)) + C(F(x-1), F(y-1))
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) {
+      const u1 = getCDF(cdfHome, x);
+      const u0 = getCDF(cdfHome, x - 1);
+      const v1 = getCDF(cdfAway, y);
+      const v0 = getCDF(cdfAway, y - 1);
+
+      const c11 = frankCopulaCDF(u1, v1, theta);
+      const c01 = frankCopulaCDF(u0, v1, theta);
+      const c10 = frankCopulaCDF(u1, v0, theta);
+      const c00 = frankCopulaCDF(u0, v0, theta);
+
+      let p = c11 - c01 - c10 + c00;
+      matrix[x][y] = Math.max(0, p); // Guard against slight floating-point negatives
+    }
+  }
+
+  // Re-normalize to ensure exact 1.0 total probability
+  let sum = 0;
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) sum += matrix[x][y];
+  }
+  if (sum > 0) {
+    for (let x = 0; x < size; x++) {
+      for (let y = 0; y < size; y++) matrix[x][y] /= sum;
+    }
+  }
+
+  return matrix;
+}
+
+
+/**
  * Blend two probability score matrices
  */
 export function blendScoreMatrices(matrixA, matrixB, weightA = 0.6) {

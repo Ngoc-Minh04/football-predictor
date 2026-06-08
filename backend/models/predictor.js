@@ -8,9 +8,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { calcLambda, buildBivariateScoreMatrix, buildNegativeBinomialScoreMatrix, blendScoreMatrices, calcResultProbs, calcOverUnder, getMostLikelyScoreConsistent, getXGStats, calibrateMatrixIPF } from './poisson.js';
+import { calcLambda, buildBivariateScoreMatrix, buildNegativeBinomialScoreMatrix, blendScoreMatrices, calcResultProbs, calcOverUnder, getMostLikelyScoreConsistent, getXGStats, calibrateMatrixIPF, buildFrankCopulaScoreMatrix } from './poisson.js';
 import { applyDixonColes } from './dixonColes.js';
 import { eloToProbabilityAdjustment } from './elo.js';
+import { blendEnsemble } from './ensembleModel.js';
 
 let OPTIMAL_CONFIG = {
   decay: 0.0045,
@@ -967,10 +968,27 @@ export function predict(params) {
   effectiveLambda3 = Math.max(0.01, Math.min(0.45, effectiveLambda3));
   console.log(`[Predictor] ELO-based Dynamic lambda3 = ${effectiveLambda3.toFixed(4)} (ELO diff = ${eloDiffAbs}, base=${lambda3})`);
 
-  // Blend Bivariate Poisson (capturing dependency) and Negative Binomial (capturing overdispersion)
+  // Bivariate Frank Copula parameter theta derived from correlation (typical ranges [-4, 4], negative means positive relationship in target draw structure)
+  // Let's dynamically scale theta based on evenness of the match
+  const matchEvenness = Math.max(0, 1 - eloDiffAbs / 500); // 1 = equal teams, 0 = highly unequal teams
+  let copulaTheta = -1.2 - 1.5 * matchEvenness; // dynamic theta
+  if (groupScenario === 'collusive_draw') {
+    copulaTheta -= 2.0; // stronger dependency for a draw
+  }
+  if (isKnockout) {
+    copulaTheta -= 1.0; // tighter game dependency
+  }
+
+  // Build the Bivariate Frank Copula matrix using Negative Binomial margins
+  const copulaMatrix = buildFrankCopulaScoreMatrix(adjHomeLambda, adjAwayLambda, copulaTheta, nbR);
+
+  // Blend Copula and Dixon-Coles Poisson/NB for robust predictions
   const bivariateMatrix = buildBivariateScoreMatrix(adjHomeLambda, adjAwayLambda, effectiveLambda3);
   const nbMatrix = buildNegativeBinomialScoreMatrix(adjHomeLambda, adjAwayLambda, nbR); // dispersion parameter r
-  let scoreMatrix = blendScoreMatrices(bivariateMatrix, nbMatrix, bivariateWeight);
+  let poissonNbMatrix = blendScoreMatrices(bivariateMatrix, nbMatrix, bivariateWeight);
+
+  // Core blend: 70% Bivariate Copula (which holds superior dependency) + 30% Poisson/NB blend
+  let scoreMatrix = blendScoreMatrices(copulaMatrix, poissonNbMatrix, 0.70);
 
   // ─── Step 9: Apply Dixon-Coles correction with dynamic rho ────────────────
   const totalLambda = adjHomeLambda + adjAwayLambda;
@@ -1067,7 +1085,15 @@ export function predict(params) {
 
   // ─── Step 12: Blend with ELO adjustment ───────────────────────────────────
   const eloWinProb = eloToProbabilityAdjustment(adjHomeElo, adjAwayElo);
-  const resultProbs = blendEloAdjustment(rawProbs, eloWinProb, isNeutral, adjHomeElo - adjAwayElo, eloWeight);
+  let resultProbs = blendEloAdjustment(rawProbs, eloWinProb, isNeutral, adjHomeElo - adjAwayElo, eloWeight);
+
+  // ─── Step 12.1: Ensemble Stacking Meta-Prediction ─────────────────────────
+  const eloResultProbs = {
+    home: eloWinProb,
+    draw: 0.25, // average default draw expectation
+    away: 1 - eloWinProb
+  };
+  resultProbs = blendEnsemble(resultProbs, eloResultProbs, null);
 
   // ─── Step 12.5: Calibrate Score Matrix using IPF ──────────────────────────
   // Align score matrix with both blended 1X2 and Over/Under probabilities

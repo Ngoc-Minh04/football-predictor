@@ -102,3 +102,51 @@ export function eloToProbabilityAdjustment(homeElo, awayElo) {
   const homeWinProb = expectedScore(homeElo, awayElo);
   return homeWinProb; // 0.0 – 1.0 (0.5 = equal teams)
 }
+
+/**
+ * Automatically calculates and updates team ELOs after a finished match.
+ * Prevents double-updating by checking database records.
+ */
+export async function processMatchEloUpdate(db, match) {
+  const { id: matchId, home_team_id: homeId, away_team_id: awayId, score_home: scoreHome, score_away: scoreAway, date, league } = match;
+
+  if (scoreHome === null || scoreAway === null) return;
+
+  // Check if ELO history already exists for this match to prevent duplicates
+  const existingHistory = await new Promise((resolve, reject) => {
+    db.get('SELECT 1 FROM elo_history WHERE match_id = ? LIMIT 1', [matchId], (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+  if (existingHistory) {
+    console.log(`[ELO] Match ${matchId} already has ELO ratings calculated. Skipping.`);
+    return;
+  }
+
+  // Fetch current ELO ratings
+  const eloHomeBefore = await getTeamElo(db, homeId);
+  const eloAwayBefore = await getTeamElo(db, awayId);
+
+  // Determine result
+  let result = 'draw';
+  if (scoreHome > scoreAway) result = 'home';
+  else if (scoreHome < scoreAway) result = 'away';
+
+  // K-factor selection
+  let kFactor = 20; // Default for leagues
+  if (league === 'WC' || league === 'EC') {
+    kFactor = 30; // official continental/world tournament
+  }
+
+  const { newHome: eloHomeAfter, newAway: eloAwayAfter } = updateElo(eloHomeBefore, eloAwayBefore, result, kFactor);
+
+  // Save changes
+  await updateTeamElo(db, homeId, eloHomeAfter);
+  await updateTeamElo(db, awayId, eloAwayAfter);
+  await saveEloHistory(db, homeId, matchId, eloHomeBefore, eloHomeAfter, date);
+  await saveEloHistory(db, awayId, matchId, eloAwayBefore, eloAwayAfter, date);
+
+  console.log(`[ELO Updated] Match ${matchId} (${league}): Home Elo ${eloHomeBefore} -> ${eloHomeAfter}, Away Elo ${eloAwayBefore} -> ${eloAwayAfter}`);
+}
+
